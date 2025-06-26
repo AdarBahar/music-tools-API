@@ -1,0 +1,41 @@
+# Music Tools API Service Dependencies
+
+# Web Framework
+fastapi>=0.104.0,<1.0.0
+uvicorn[standard]>=0.24.0,<1.0.0
+python-multipart>=0.0.6
+
+# Audio Processing & Downloads
+yt-dlp>=2023.7.6
+demucs>=4.0.0,<5.0.0
+
+# Audio File Handling
+soundfile>=0.12.1
+torchaudio>=0.12.0
+
+# Audio Analysis
+librosa>=0.10.0,<1.0.0
+scipy>=1.10.0
+numpy>=1.24.0
+
+# Utilities
+aiofiles>=23.0.0
+python-dotenv>=1.0.0
+pydantic>=2.0.0
+pydantic-settings>=2.0.0
+httpx>=0.25.0
+
+# Background Tasks
+celery>=5.3.0
+redis>=5.0.0
+
+# System Requirements:
+# - Python 3.8+
+# - FFmpeg (install via system package manager)
+#   macOS: brew install ffmpeg
+#   Linux: sudo apt install ffmpeg
+#   Windows: Download from https://ffmpeg.org/
+# - Redis (for background task queue)
+#   macOS: brew install redis
+#   Linux: sudo apt install redis-server
+#   Windows: Download from https://redis.io/

@@ -1,0 +1,49 @@
+# Include documentation
+include README.md
+include LICENSE
+include CHANGELOG.md
+include CONTRIBUTING.md
+include INSTALLATION.md
+include API_DOCUMENTATION.md
+include DEPLOYMENT.md
+
+# Include configuration files
+include .env.example
+include requirements.txt
+include pyproject.toml
+
+# Include Docker files
+include Dockerfile
+include docker-compose.yml
+include .dockerignore
+include nginx.conf
+
+# Include scripts
+recursive-include scripts *.sh
+
+# Include examples
+recursive-include examples *.py *.sh
+
+# Exclude development and build files
+exclude .gitignore
+exclude setup.py
+global-exclude __pycache__
+global-exclude *.py[cod]
+global-exclude *.so
+global-exclude .DS_Store
+global-exclude *.swp
+global-exclude *.swo
+
+# Exclude data directories
+prune uploads
+prune outputs
+prune temp
+prune logs
+prune data
+
+# Exclude test files
+prune tests
+
+# Exclude IDE files
+prune .vscode
+prune .idea
