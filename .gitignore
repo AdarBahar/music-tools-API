@@ -175,3 +175,7 @@ dump.rdb
 # Temporary files
 *.tmp
 *.temp
+
+# Development notes and todos
+todo.txt
+TODO.txt
