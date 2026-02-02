@@ -1,0 +1,306 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>CodeAgent Snippets</title>
+  <style>
+    :root {
+      --bg: #0b0c10;
+      --card: #12131a;
+      --text: #e8e8ea;
+      --muted: #b0b3bd;
+      --border: #26283a;
+      --btn: #1f6feb;
+      --btnText: #ffffff;
+    }
+    body {
+      margin: 0; padding: 24px;
+      font-family: ui-sans-serif, system-ui, -apple-system, Segoe UI, Roboto, Arial;
+      background: var(--bg);
+      color: var(--text);
+    }
+    .wrap { max-width: 980px; margin: 0 auto; }
+    h1 { margin: 0 0 6px 0; font-size: 22px; }
+    .sub { margin: 0 0 18px 0; color: var(--muted); }
+    .flow {
+      padding: 10px 12px; border: 1px solid var(--border); border-radius: 10px;
+      background: rgba(255,255,255,0.02); color: var(--muted);
+      margin: 14px 0 18px;
+      font-size: 13px;
+    }
+    .grid {
+      display: grid;
+      grid-template-columns: 1fr;
+      gap: 14px;
+    }
+    @media (min-width: 860px) {
+      .grid { grid-template-columns: 1fr 1fr; }
+    }
+    .card {
+      border: 1px solid var(--border);
+      background: var(--card);
+      border-radius: 14px;
+      overflow: hidden;
+    }
+    .card-header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      padding: 14px 14px 10px 14px;
+      border-bottom: 1px solid var(--border);
+    }
+    .alias { font-weight: 700; font-size: 14px; }
+    .meta { color: var(--muted); font-size: 12px; margin-top: 2px; }
+    .when { color: var(--muted); font-size: 12px; margin-top: 6px; }
+    pre {
+      margin: 0;
+      padding: 12px 14px 14px 14px;
+      overflow: auto;
+      font-size: 12px;
+      line-height: 1.35;
+    }
+    code { white-space: pre; }
+    .btn {
+      background: var(--btn);
+      color: var(--btnText);
+      border: 0;
+      border-radius: 10px;
+      padding: 8px 12px;
+      cursor: pointer;
+      font-weight: 600;
+      font-size: 12px;
+      height: fit-content;
+    }
+    .btn:active { transform: translateY(1px); }
+    .toast {
+      position: fixed;
+      bottom: 18px;
+      left: 50%;
+      transform: translateX(-50%);
+      background: rgba(0,0,0,0.75);
+      border: 1px solid var(--border);
+      color: var(--text);
+      padding: 10px 12px;
+      border-radius: 12px;
+      font-size: 12px;
+      opacity: 0;
+      pointer-events: none;
+      transition: opacity 160ms ease;
+    }
+    .toast.show { opacity: 1; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <h1>CodeAgent Snippets</h1>
+    <p class="sub">Copy-paste blocks aligned with prompt filenames in <code>prompts/</code>.</p>
+    <div class="flow"><strong>Flow:</strong> PLAN → IMPLEMENT → RUN → SELF_CHECK (insert AUDIT / REVIEW_NODE before RUN when needed)</div>
+
+    <div class="grid">
+
+      <div class="card" id="card-PLAN">
+        <div class="card-header">
+          <div>
+            <div class="alias">PLAN</div>
+            <div class="meta">Plan a Feature · <code>plan.md</code></div>
+            <div class="when">When to use: Before writing any code for a non-trivial change.</div>
+          </div>
+          <button class="btn" data-copy="PLAN">Copy</button>
+        </div>
+        <pre><code id="code-PLAN">Use the CodeAgent plan prompt.
+
+Context:
+- Feature goals and constraints are described below
+
+Task:
+- Propose a clear implementation plan
+- Include scope, steps, risks, and validation
+- Do not write code yet</code></pre>
+      </div>
+
+      <div class="card" id="card-IMPLEMENT">
+        <div class="card-header">
+          <div>
+            <div class="alias">IMPLEMENT</div>
+            <div class="meta">Implement a Feature · <code>implement.md</code></div>
+            <div class="when">When to use: After a plan has been reviewed and approved.</div>
+          </div>
+          <button class="btn" data-copy="IMPLEMENT">Copy</button>
+        </div>
+        <pre><code id="code-IMPLEMENT">Use the CodeAgent implement prompt.
+
+Context:
+- A plan already exists and must be followed exactly
+
+Task:
+- Implement the feature exactly as planned
+- Make minimal necessary changes
+- Update tests and documentation if required</code></pre>
+      </div>
+
+      <div class="card" id="card-RUN">
+        <div class="card-header">
+          <div>
+            <div class="alias">RUN</div>
+            <div class="meta">Run or Execute a Task · <code>run.md</code></div>
+            <div class="when">When to use: To execute commands, scripts, or operational tasks.</div>
+          </div>
+          <button class="btn" data-copy="RUN">Copy</button>
+        </div>
+        <pre><code id="code-RUN">Use the CodeAgent run prompt.
+
+Context:
+- Commands must be safe and reversible
+
+Task:
+- Execute the requested operation
+- Report results and failures clearly</code></pre>
+      </div>
+
+      <div class="card" id="card-DOCUMENT">
+        <div class="card-header">
+          <div>
+            <div class="alias">DOCUMENT</div>
+            <div class="meta">Update or Improve Documentation · <code>document.md</code></div>
+            <div class="when">When to use: When behavior changed or documentation is outdated.</div>
+          </div>
+          <button class="btn" data-copy="DOCUMENT">Copy</button>
+        </div>
+        <pre><code id="code-DOCUMENT">Use the CodeAgent document prompt.
+
+Context:
+- Documentation lives in /docs and README files
+
+Task:
+- Update documentation to reflect recent changes
+- Fix inaccuracies and outdated sections
+- Do not change behavior or code</code></pre>
+      </div>
+
+      <div class="card" id="card-MIGRATE">
+        <div class="card-header">
+          <div>
+            <div class="alias">MIGRATE</div>
+            <div class="meta">Migrate or Refactor Code · <code>migrate.md</code></div>
+            <div class="when">When to use: For structural changes that must preserve behavior.</div>
+          </div>
+          <button class="btn" data-copy="MIGRATE">Copy</button>
+        </div>
+        <pre><code id="code-MIGRATE">Use the CodeAgent migrate prompt.
+
+Context:
+- Existing behavior must be preserved
+- Target state is described below
+
+Task:
+- Perform the migration or refactor safely
+- Call out breaking changes explicitly
+- Keep commits small and logical</code></pre>
+      </div>
+
+      <div class="card" id="card-AUDIT">
+        <div class="card-header">
+          <div>
+            <div class="alias">AUDIT</div>
+            <div class="meta">Audit Code · <code>audit.md</code></div>
+            <div class="when">When to use: To assess quality, security, or correctness.</div>
+          </div>
+          <button class="btn" data-copy="AUDIT">Copy</button>
+        </div>
+        <pre><code id="code-AUDIT">Use the CodeAgent audit prompt.
+
+Context:
+- Focus on correctness, security, and maintainability
+
+Task:
+- Identify issues and risks
+- Suggest concrete improvements
+- Do not change code unless explicitly asked</code></pre>
+      </div>
+
+      <div class="card" id="card-REVIEW_NODE">
+        <div class="card-header">
+          <div>
+            <div class="alias">REVIEW_NODE</div>
+            <div class="meta">Review Node.js Code · <code>code-review-nodejs.md</code></div>
+            <div class="when">When to use: For in-depth review of Node.js or backend JavaScript code.</div>
+          </div>
+          <button class="btn" data-copy="REVIEW_NODE">Copy</button>
+        </div>
+        <pre><code id="code-REVIEW_NODE">Use the CodeAgent code-review-nodejs prompt.
+
+Context:
+- Target code is Node.js or backend JavaScript
+
+Task:
+- Review for correctness, security, and performance
+- Flag anti-patterns and risky dependencies
+- Suggest concrete, actionable improvements</code></pre>
+      </div>
+
+      <div class="card" id="card-SELF_CHECK">
+        <div class="card-header">
+          <div>
+            <div class="alias">SELF_CHECK</div>
+            <div class="meta">Self-Check Before Final Answer · <code>self-check-conventions.md</code></div>
+            <div class="when">When to use: Before delivering a final response or solution.</div>
+          </div>
+          <button class="btn" data-copy="SELF_CHECK">Copy</button>
+        </div>
+        <pre><code id="code-SELF_CHECK">Use the CodeAgent self-check prompt.
+
+Task:
+- Verify correctness and completeness
+- Check for missed edge cases
+- Confirm alignment with the original request</code></pre>
+      </div>
+
+    </div>
+  </div>
+
+  <div class="toast" id="toast">Copied</div>
+
+  <script>
+    const toast = document.getElementById('toast');
+    let toastTimer = null;
+
+    function showToast(msg) {
+      toast.textContent = msg;
+      toast.classList.add('show');
+      clearTimeout(toastTimer);
+      toastTimer = setTimeout(() => toast.classList.remove('show'), 900);
+    }
+
+    async function copyText(text) {
+      if (navigator.clipboard && window.isSecureContext) {
+        await navigator.clipboard.writeText(text);
+        return;
+      }
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      ta.style.position = 'fixed';
+      ta.style.left = '-9999px';
+      document.body.appendChild(ta);
+      ta.focus();
+      ta.select();
+      document.execCommand('copy');
+      document.body.removeChild(ta);
+    }
+
+    document.querySelectorAll('button[data-copy]').forEach(btn => {
+      btn.addEventListener('click', async () => {
+        const key = btn.getAttribute('data-copy');
+        const codeEl = document.getElementById('code-' + key);
+        const raw = codeEl.textContent;
+        try {
+          await copyText(raw);
+          showToast('Copied ' + key);
+        } catch (e) {
+          showToast('Copy failed');
+        }
+      });
+    });
+  </script>
+</body>
+</html>

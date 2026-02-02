@@ -1,0 +1,4 @@
+-- Project database schema
+-- This file is the source of truth for the running database.
+-- It must reflect tables, columns, indexes, and constraints exactly.
+-- Any schema change requires updating this file.
