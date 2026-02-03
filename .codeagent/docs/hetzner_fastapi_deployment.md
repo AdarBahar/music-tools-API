@@ -549,3 +549,31 @@ sudo systemctl restart music-tools-api
 ---
 
 **🎉 You now have a secure, isolated, production-grade FastAPI deployment on Hetzner!**
+
+---
+
+## Automated Deployment Script
+
+For subsequent deployments, use the automated deploy script:
+
+💻 **Localhost** | 👤 **your user**
+
+```bash
+# From the project root
+./scripts/deploy.sh
+```
+
+The script will:
+1. Create a distribution tarball (excluding venv, cache, etc.)
+2. Upload to `/tmp-apitools` on the server
+3. Backup the current deployment
+4. Deploy new files to `/var/www/apitools`
+5. Install/update Python dependencies
+6. Restart the systemd service
+7. Verify health check
+8. Log the deployment
+
+**Prerequisites:**
+- SSH config with `Host apitools` pointing to your server
+- `apitools` user with sudo access on the server
+- Initial deployment completed (venv created, systemd configured)
