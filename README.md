@@ -234,6 +234,35 @@ Once the service is running, you can access the interactive documentation:
 
 > **Note**: If running manually (not with Docker), use port 8000 instead of 8001.
 
+### Production API
+
+The API is deployed and available at:
+- **Base URL**: https://apitools.bahar.co.il
+- **Swagger UI**: https://apitools.bahar.co.il/docs
+- **Health Check**: https://apitools.bahar.co.il/health
+
+## 🔐 Authentication
+
+The API uses API key authentication. Include your API key in the `X-API-Key` header:
+
+```bash
+curl -H "X-API-Key: your-api-key" https://apitools.bahar.co.il/api/v1/youtube-to-mp3 \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
+```
+
+See [Authentication Guide](.codeagent/docs/authentication.md) for detailed setup instructions.
+
+## 🔌 Integration Guide
+
+For integrating the API into your applications, see the comprehensive [Integration Guide](.codeagent/docs/app_integration.md) which includes:
+
+- Complete Node.js client implementation
+- All endpoint documentation with request/response schemas
+- Error handling and retry logic
+- Rate limiting guidance
+- Best practices for production use
+
 ## ⚙️ Configuration
 
 The service can be configured using environment variables. Copy `.env.example` to `.env` and modify as needed:
@@ -320,6 +349,28 @@ Download from https://redis.io/ or use Docker
 - **GPU Acceleration**: Can reduce stem separation time by 5-10x
 - **Concurrent Processing**: Supports multiple simultaneous requests
 
-## 📄 License
+## � Production Deployment
+
+For deploying to a production server (Hetzner, AWS, DigitalOcean, etc.), see the [Deployment Guide](.codeagent/docs/hetzner_fastapi_deployment.md) which covers:
+
+- Creating a dedicated user for isolation
+- Setting up Python virtual environment
+- Configuring systemd service
+- Nginx reverse proxy setup
+- SSL certificate with Let's Encrypt
+- Firewall configuration
+- Security best practices
+
+## 📋 Additional Documentation
+
+| Document | Description |
+|----------|-------------|
+| [Deployment Guide](.codeagent/docs/hetzner_fastapi_deployment.md) | Production server setup |
+| [Integration Guide](.codeagent/docs/app_integration.md) | API integration with Node.js examples |
+| [Authentication](.codeagent/docs/authentication.md) | API key management |
+| [Logs Guide](.codeagent/docs/logs.md) | Accessing and analyzing logs |
+| [API Documentation](API_DOCUMENTATION.md) | Detailed API reference |
+
+## �📄 License
 
 This project is licensed under the MIT License - see the [LICENSE](LICENSE) file for details.

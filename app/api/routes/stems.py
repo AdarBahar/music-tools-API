@@ -6,24 +6,56 @@ import os
 import logging
 import tempfile
 from typing import Optional, List
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
+from slowapi import Limiter
+from slowapi.util import get_remote_address
 
 from app.core.config import settings
 from app.models.responses import StemSeparationResponse, StemFiles
-from app.services.stem_service import StemSeparationService
+from app.services.stem_service import StemSeparationService, SecurityError
+from app.core.auth import verify_api_key
+from app.core.cleanup import temp_file_manager, cleanup_file, register_cleanup_on_exit
+from app.core.memory_management import (
+    memory_monitor, streaming_handler, operation_limiter
+)
+from app.core.metrics import MetricsContext
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
+# Initialize limiter for this module
+limiter = Limiter(key_func=get_remote_address) if settings.ENABLE_RATE_LIMITING else None
 
-@router.post(
+
+async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
+    """
+    Background task to schedule cleanup of stem files after delay period
+    
+    Args:
+        stem_file_paths: List of stem file paths to cleanup
+        delay_hours: Hours to wait before cleanup
+    """
+    import asyncio
+    from app.core.cleanup import cleanup_files
+    
+    # Wait for the specified delay
+    await asyncio.sleep(delay_hours * 3600)
+    
+    # Clean up the files
+    cleaned_count = cleanup_files(stem_file_paths)
+    logger.info(f"Background cleanup removed {cleaned_count}/{len(stem_file_paths)} stem files")
+
+
+@limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else lambda f: f@router.post(
     "/separate-stems",
     response_model=StemSeparationResponse,
     summary="Separate audio into stems",
-    description="Upload an audio file and separate it into individual stems (vocals, drums, bass, other) using AI"
+    description="Upload an audio file and separate it into individual stems (vocals, drums, bass, other) using AI. Requires authentication when enabled.",
+    dependencies=[Depends(verify_api_key)]
 )
 async def separate_stems(
+    request: Request,
     background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Audio file to separate"),
     model: str = Form(default=settings.DEFAULT_DEMUCS_MODEL, description="Demucs model to use"),
@@ -41,102 +73,146 @@ async def separate_stems(
     Returns separated stem files and download URLs.
     """
     try:
-        # Validate file size
-        if file.size and file.size > settings.MAX_FILE_SIZE_BYTES:
-            raise HTTPException(
-                status_code=413,
-                detail=f"File too large. Maximum size: {settings.MAX_FILE_SIZE_MB}MB"
-            )
+        # Memory check before processing
+        stats = memory_monitor.get_memory_stats()
+        logger.info(f"Memory status - Available: {stats.available_memory_mb:.1f}MB, Process: {stats.process_memory_mb:.1f}MB")
         
-        # Validate model
-        if model not in settings.SUPPORTED_DEMUCS_MODELS:
-            raise HTTPException(
-                status_code=400,
-                detail=f"Unsupported model. Supported: {settings.SUPPORTED_DEMUCS_MODELS}"
-            )
-        
-        # Validate output format
-        if output_format not in settings.SUPPORTED_STEM_FORMATS:
+        # Comprehensive file type and content validation
+        is_valid, error_message = await upload_validator.validate_upload(file)
+        if not is_valid:
+            logger.warning(f"File validation failed: {error_message}")
             raise HTTPException(
                 status_code=400,
-                detail=f"Unsupported format. Supported: {settings.SUPPORTED_STEM_FORMATS}"
+                detail="Invalid file format or content"
             )
         
-        # Parse stems list - default to all stems if empty/null
-        requested_stems = None
-        valid_stems = ['vocals', 'drums', 'bass', 'other']
-
-        if stems and stems.strip():  # Check for non-empty string
-            requested_stems = [s.strip() for s in stems.split(',') if s.strip()]
-            for stem in requested_stems:
-                if stem not in valid_stems:
+        # Get file size after validation
+        file_size = await upload_validator.validate_and_get_size(file)
+        logger.info(f"File validation passed: {file.filename} ({file_size / (1024*1024):.2f}MB)")
+        
+        # Reset file position after validation
+        await file.seek(0)
+        
+        # Stream upload to temporary file to avoid loading into memory
+        temp_file_path = await streaming_handler.stream_upload_to_temp(file)
+        
+        # Register cleanup on exit to ensure cleanup even if process crashes
+        register_cleanup_on_exit(str(temp_file_path))
+        
+        # Use context manager for guaranteed cleanup
+        async with temp_file_manager(str(temp_file_path)) as managed_temp_path:
+            try:
+                # Validate model
+                if model not in settings.SUPPORTED_DEMUCS_MODELS:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Invalid stem '{stem}'. Valid stems: {valid_stems}"
+                        detail=f"Unsupported model. Supported: {settings.SUPPORTED_DEMUCS_MODELS}"
                     )
-        # If stems is None, empty string, or only whitespace, requested_stems remains None
-        # This will default to all stems in the service layer
-        
-        # Save uploaded file temporarily
-        with tempfile.NamedTemporaryFile(delete=False, suffix=f".{file.filename.split('.')[-1]}") as temp_file:
-            content = await file.read()
-            temp_file.write(content)
-            temp_file_path = temp_file.name
-        
-        try:
-            # Process the separation
-            stem_service = StemSeparationService()
-            result = stem_service.separate_stems(
-                audio_file_path=temp_file_path,
-                model=model,
-                output_format=output_format,
-                stems=requested_stems,
-                original_filename=file.filename
-            )
-            
-            if not result['success']:
-                return StemSeparationResponse(
-                    success=False,
-                    error=result.get('error', 'Unknown error occurred')
+                
+                # Validate output format
+                if output_format not in settings.SUPPORTED_STEM_FORMATS:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Unsupported format. Supported: {settings.SUPPORTED_STEM_FORMATS}"
+                    )
+                
+                # Parse stems list - default to all stems if empty/null
+                requested_stems = None
+                valid_stems = ['vocals', 'drums', 'bass', 'other']
+
+                if stems and stems.strip():  # Check for non-empty string
+                    requested_stems = [s.strip() for s in stems.split(',') if s.strip()]
+                    for stem in requested_stems:
+                        if stem not in valid_stems:
+                            raise HTTPException(
+                                status_code=400,
+                                detail=f"Invalid stem '{stem}'. Valid stems: {valid_stems}"
+                            )
+                # If stems is None, empty string, or only whitespace, requested_stems remains None
+                # This will default to all stems in the service layer
+                
+                # Process the separation with memory management
+                stem_service = StemSeparationService()
+                
+                # Track processing time with metrics
+                with MetricsContext("stem_separation"):
+                    result = await stem_service.separate_stems(
+                        audio_file_path=managed_temp_path,
+                        model=model,
+                        output_format=output_format,
+                        stems=requested_stems,
+                        original_filename=file.filename
+                    )
+                
+                if not result['success']:
+                    return StemSeparationResponse(
+                        success=False,
+                        error=result.get('error', 'Unknown error occurred')
+                    )
+                
+                # Generate download URLs for stems
+                stem_files = StemFiles()
+                for stem_name, file_path in result['stem_files'].items():
+                    download_url = f"/api/v1/download/{result['job_id']}/{os.path.basename(file_path)}"
+                    setattr(stem_files, stem_name, download_url)
+                
+                # Schedule cleanup of generated stem files for later (after download period)
+                background_tasks.add_task(
+                    _schedule_stem_cleanup, 
+                    list(result['stem_files'].values()),
+                    settings.FILE_RETENTION_HOURS
                 )
-            
-            # Generate download URLs for stems
-            stem_files = StemFiles()
-            for stem_name, file_path in result['stem_files'].items():
-                download_url = f"/api/v1/download/{result['job_id']}/{os.path.basename(file_path)}"
-                setattr(stem_files, stem_name, download_url)
-            
-            return StemSeparationResponse(
-                success=True,
-                message="Stems separated successfully",
-                job_id=result['job_id'],
-                stems=stem_files,
-                processing_time_seconds=result['processing_time_seconds']
-            )
-            
-        finally:
-            # Clean up temporary file
-            try:
-                os.unlink(temp_file_path)
-            except OSError:
-                pass
-        
+                
+                return StemSeparationResponse(
+                    success=True,
+                    message="Stems separated successfully",
+                    job_id=result['job_id'],
+                    stems=stem_files,
+                    processing_time_seconds=result['processing_time_seconds']
+                )
+                
+            except SecurityError as e:
+                # Handle security validation errors specifically
+                logger.error(f"Security validation failed: {type(e).__name__}")
+                raise HTTPException(
+                    status_code=400,
+                    detail="Invalid request parameters"
+                )
+            except HTTPException:
+                raise
+            except Exception as e:
+                logger.error(f"Error in separate_stems: {type(e).__name__}", exc_info=True)
+                raise HTTPException(
+                    status_code=500,
+                    detail="Internal server error"
+                )
+        # temp_file_manager automatically cleans up the temporary file here
+    
+    except SecurityError as e:
+        # Handle security validation errors specifically
+        logger.error(f"Security validation failed: {type(e).__name__}")
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid request parameters"
+        )
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in separate_stems: {e}")
+        logger.error(f"Error in separate_stems: {type(e).__name__}", exc_info=True)
         raise HTTPException(
             status_code=500,
-            detail=f"Internal server error: {str(e)}"
+            detail="Internal server error"
         )
 
 
+@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/models",
     summary="Get available Demucs models",
-    description="List all available Demucs models for stem separation"
+    description="List all available Demucs models for stem separation. Requires authentication when enabled.",
+    dependencies=[Depends(verify_api_key)]
 )
-async def get_available_models():
+async def get_available_models(request: Request):
     """
     Get list of available Demucs models
     
@@ -186,7 +262,8 @@ async def get_available_models():
 @router.get(
     "/formats",
     summary="Get supported output formats",
-    description="List all supported output formats for stems"
+    description="List all supported output formats for stems. Requires authentication when enabled.",
+    dependencies=[Depends(verify_api_key)]
 )
 async def get_supported_formats():
     """

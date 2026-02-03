@@ -4,10 +4,12 @@ File cleanup utilities for managing temporary files and old downloads
 
 import os
 import time
+import atexit
 import logging
 import threading
 from pathlib import Path
-from typing import List
+from typing import List, Optional
+from contextlib import asynccontextmanager
 
 from .config import settings
 
@@ -160,3 +162,88 @@ def get_directory_stats(directory: Path) -> dict:
         "total_size_mb": round(total_size / (1024 * 1024), 2),
         "oldest_file_age_hours": round(oldest_age_hours, 2)
     }
+
+
+@asynccontextmanager
+async def temp_file_manager(file_path: str):
+    """
+    Context manager for temporary file cleanup
+    
+    Ensures files are cleaned up immediately after processing,
+    even if exceptions occur during processing.
+    
+    Args:
+        file_path: Path to temporary file
+        
+    Usage:
+        async with temp_file_manager("/path/to/temp/file") as path:
+            # Process file
+            pass
+        # File is automatically cleaned up here
+    """
+    try:
+        yield file_path
+    finally:
+        try:
+            file_path_obj = Path(file_path)
+            if file_path_obj.exists():
+                file_path_obj.unlink(missing_ok=True)
+                logger.debug(f"Cleaned up temporary file: {file_path}")
+        except Exception as e:
+            logger.warning(f"Failed to cleanup temporary file {file_path}: {e}")
+
+
+def cleanup_file(file_path: str) -> bool:
+    """
+    Immediately cleanup a single file
+    
+    Args:
+        file_path: Path to file to cleanup
+        
+    Returns:
+        True if cleanup successful, False otherwise
+    """
+    try:
+        file_path_obj = Path(file_path)
+        if file_path_obj.exists():
+            file_path_obj.unlink(missing_ok=True)
+            logger.debug(f"Cleaned up file: {file_path}")
+            return True
+        return True  # File doesn't exist, consider it cleaned
+    except Exception as e:
+        logger.warning(f"Failed to cleanup file {file_path}: {e}")
+        return False
+
+
+def cleanup_files(file_paths: List[str]) -> int:
+    """
+    Cleanup multiple files immediately
+    
+    Args:
+        file_paths: List of file paths to cleanup
+        
+    Returns:
+        Number of files successfully cleaned up
+    """
+    cleaned_count = 0
+    for file_path in file_paths:
+        if cleanup_file(file_path):
+            cleaned_count += 1
+    
+    if cleaned_count > 0:
+        logger.info(f"Cleaned up {cleaned_count}/{len(file_paths)} files")
+    
+    return cleaned_count
+
+
+def register_cleanup_on_exit(file_path: str) -> None:
+    """
+    Register a file for cleanup when the process exits
+    
+    Args:
+        file_path: Path to file to cleanup on exit
+    """
+    def cleanup_on_exit():
+        cleanup_file(file_path)
+    
+    atexit.register(cleanup_on_exit)

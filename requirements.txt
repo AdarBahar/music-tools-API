@@ -7,13 +7,21 @@ python-multipart>=0.0.6
 
 # Audio Processing & Downloads
 yt-dlp>=2023.7.6
+# Note: demucs installation can be tricky due to lameenc dependency
+# Try installing demucs separately if this fails:
+# pip install demucs --no-deps
+# pip install torch torchaudio
 demucs>=4.0.0,<5.0.0
 
-# Audio File Handling
+# Audio File Handling  
 soundfile>=0.12.1
+# torchaudio installation often conflicts with demucs, install manually if needed
 torchaudio>=0.12.0
 
-# Audio Analysis
+# Memory Management
+psutil>=5.9.0
+
+# Audio Analysis (optional - can be installed separately if conflicts occur)
 librosa>=0.10.0,<1.0.0
 scipy>=1.10.0
 numpy>=1.24.0
@@ -28,6 +36,12 @@ httpx>=0.25.0
 # Background Tasks
 celery>=5.3.0
 redis>=5.0.0
+
+# Rate Limiting
+slowapi>=0.1.9
+
+# Monitoring & Metrics
+prometheus-client>=0.18.0
 
 # System Requirements:
 # - Python 3.8+

@@ -67,6 +67,9 @@ class YouTubeService:
                     }],
                     'quiet': True,
                     'no_warnings': True,
+                    'socket_timeout': settings.YOUTUBE_DOWNLOAD_TIMEOUT,
+                    'fragment_retries': 3,
+                    'retries': 3,
                 }
                 
                 # Extract info first if metadata is requested

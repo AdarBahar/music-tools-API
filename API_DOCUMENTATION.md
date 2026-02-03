@@ -17,11 +17,17 @@ http://localhost:8000
 
 ## Authentication
 
-Currently, the API does not require authentication. For production use, consider implementing API key authentication by setting `REQUIRE_API_KEY=true` in the environment.
+The API supports optional API key authentication. By default, authentication is disabled. For production use, enable API key authentication by setting `REQUIRE_API_KEY=true` in the environment and providing `VALID_API_KEYS` with comma-separated keys. All authenticated requests must include the `X-API-Key` header.
+
+**Note:** Sensitive API documentation (`/docs`, `/redoc`, `/openapi.json`) is automatically disabled in production when `DEBUG=false`.
 
 ## Rate Limiting
 
-No rate limiting is currently implemented. Consider adding rate limiting for production use.
+The API includes rate limiting via slowapi. Different operation types have different limits:
+- **Light operations** (health checks, info queries): Higher rate limit
+- **Heavy operations** (conversions, stem separation): Lower rate limit
+
+Rate limiting can be enabled/disabled via `ENABLE_RATE_LIMITING=true` in the environment. Limits are enforced per client IP address or API key hash in production.
 
 ## File Naming Convention
 

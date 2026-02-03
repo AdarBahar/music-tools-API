@@ -288,10 +288,8 @@ curl http://localhost:8000/health
 # API documentation
 curl http://localhost:8000/docs
 
-# Test YouTube info extraction
-curl -X POST "http://localhost:8000/api/v1/youtube-info" \
-     -H "Content-Type: application/json" \
-     -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}'
+# Test YouTube info extraction (GET endpoint)
+curl "http://localhost:8000/api/v1/youtube-info?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
 
 ### Run Test Suite

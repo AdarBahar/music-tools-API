@@ -1,0 +1,24 @@
+# Music Tools API - Audio Processing Dependencies (Install after core)
+# These may require manual installation or have platform-specific issues
+
+# PyTorch (required for demucs) - install platform-specific version
+# For macOS: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu
+# For Linux: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cpu  
+# For CUDA: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
+torch>=1.12.0
+torchaudio>=0.12.0
+
+# Demucs for stem separation (may require manual installation)
+# If automatic install fails, try: pip install demucs --no-deps
+demucs>=4.0.0,<5.0.0
+
+# Advanced audio analysis (optional)
+librosa>=0.10.0,<1.0.0
+
+# System Requirements:
+# - FFmpeg (install via system package manager)
+#   macOS: brew install ffmpeg
+#   Linux: sudo apt install ffmpeg
+# - Redis (for background task queue)  
+#   macOS: brew install redis
+#   Linux: sudo apt install redis-server
