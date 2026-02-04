@@ -20,8 +20,10 @@ from app.core.memory_management import (
     memory_monitor, streaming_handler, operation_limiter
 )
 from app.core.metrics import MetricsContext
+from app.core.upload_validation import upload_validator
 
-logger = logging.getLogger(__name__)
+# Use Uvicorn's configured logger so logs reliably appear in journalctl/systemd.
+logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
 
 # Initialize limiter for this module
@@ -47,7 +49,8 @@ async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
     logger.info(f"Background cleanup removed {cleaned_count}/{len(stem_file_paths)} stem files")
 
 
-@limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else lambda f: f@router.post(
+@(limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else (lambda f: f))
+@router.post(
     "/separate-stems",
     response_model=StemSeparationResponse,
     summary="Separate audio into stems",
@@ -73,6 +76,9 @@ async def separate_stems(
     Returns separated stem files and download URLs.
     """
     try:
+        logger.info(f"Stem separation request received: model={model}, format={output_format}, stems={stems}")
+        logger.info(f"File info: filename={file.filename}, content_type={file.content_type}")
+        
         # Memory check before processing
         stats = memory_monitor.get_memory_stats()
         logger.info(f"Memory status - Available: {stats.available_memory_mb:.1f}MB, Process: {stats.process_memory_mb:.1f}MB")
@@ -83,7 +89,7 @@ async def separate_stems(
             logger.warning(f"File validation failed: {error_message}")
             raise HTTPException(
                 status_code=400,
-                detail="Invalid file format or content"
+                detail=f"Invalid file: {error_message}"
             )
         
         # Get file size after validation
@@ -103,10 +109,10 @@ async def separate_stems(
         async with temp_file_manager(str(temp_file_path)) as managed_temp_path:
             try:
                 # Validate model
-                if model not in settings.SUPPORTED_DEMUCS_MODELS:
+                if model not in settings.supported_demucs_models_list:
                     raise HTTPException(
                         status_code=400,
-                        detail=f"Unsupported model. Supported: {settings.SUPPORTED_DEMUCS_MODELS}"
+                        detail=f"Unsupported model. Supported: {settings.supported_demucs_models_list}"
                     )
                 
                 # Validate output format
@@ -198,10 +204,11 @@ async def separate_stems(
     except HTTPException:
         raise
     except Exception as e:
-        logger.error(f"Error in separate_stems: {type(e).__name__}", exc_info=True)
+        logger.error(f"Error in separate_stems: {type(e).__name__}: {str(e)}")
+        logger.exception("Full traceback:")
         raise HTTPException(
             status_code=500,
-            detail="Internal server error"
+            detail=f"Internal server error: {type(e).__name__}"
         )
 
 
@@ -242,7 +249,7 @@ async def get_available_models(request: Request):
     }
     
     available_models = []
-    for model in settings.SUPPORTED_DEMUCS_MODELS:
+    for model in settings.supported_demucs_models_list:
         if model in models_info:
             available_models.append(models_info[model])
         else:

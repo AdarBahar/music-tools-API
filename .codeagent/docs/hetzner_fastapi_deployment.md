@@ -124,7 +124,7 @@ python3 --version
 
 **If Python 3.10+ is already installed** (e.g., Python 3.11, 3.12), use the system Python:
 ```bash
-sudo apt install python3-venv python3-pip nginx unzip git -y
+sudo apt install python3-venv python3-pip nginx unzip git ffmpeg -y
 ```
 
 **If you need Python 3.10 specifically** (e.g., on older Ubuntu), add the deadsnakes PPA:
@@ -132,10 +132,77 @@ sudo apt install python3-venv python3-pip nginx unzip git -y
 sudo apt install software-properties-common -y
 sudo add-apt-repository ppa:deadsnakes/ppa -y
 sudo apt update
-sudo apt install python3.10 python3.10-venv python3.10-dev nginx unzip git -y
+sudo apt install python3.10 python3.10-venv python3.10-dev nginx unzip git ffmpeg -y
 ```
 
 > **Note:** Most modern Hetzner images (Ubuntu 22.04+, Debian 12+) ship with Python 3.10 or newer. Use whatever version is available (3.10, 3.11, 3.12 all work).
+
+---
+
+## 2.5 Configure Swap Space (Required for Stem Separation)
+
+🖥️ **Server** | 👤 **apitools** (with sudo)
+
+Demucs stem separation requires **4-8GB RAM** depending on the model. If your server has less than 4GB RAM, you **must** add swap space to prevent OOM (Out of Memory) kills.
+
+### Check Current Memory and Swap
+
+```bash
+free -h
+```
+
+### Create Swap File (4GB recommended)
+
+```bash
+# Create 4GB swap file
+sudo fallocate -l 4G /swapfile
+sudo chmod 600 /swapfile
+sudo mkswap /swapfile
+sudo swapon /swapfile
+
+# Verify swap is active
+free -h
+```
+
+### Make Swap Permanent
+
+```bash
+# Add to fstab so swap persists after reboot
+echo '/swapfile none swap sw 0 0' | sudo tee -a /etc/fstab
+```
+
+### Optimize Swap Settings (Optional)
+
+```bash
+# Reduce swappiness (use RAM first, swap only when needed)
+echo 'vm.swappiness=10' | sudo tee -a /etc/sysctl.conf
+sudo sysctl -p
+```
+
+> **Memory Requirements by Demucs Model:**
+> | Model | RAM Required | Quality | Speed |
+> |-------|-------------|---------|-------|
+> | `htdemucs` | ~3-4GB | Good | Fast |
+> | `htdemucs_ft` | ~5-8GB | Best | Slower |
+> | `mdx_extra` | ~4-5GB | Good | Medium |
+> | `mdx_extra_q` | ~4-5GB | Good (quantized) | Medium |
+>
+> **Recommendation:** Use `htdemucs` on servers with <4GB RAM + swap. Use `htdemucs_ft` only on servers with 8GB+ RAM.
+
+### Pre-download Demucs Models (Optional)
+
+Pre-downloading models reduces peak memory usage during first requests:
+
+```bash
+cd /var/www/apitools
+source venv/bin/activate
+
+# Download the default model
+python -c "import torch; from demucs.pretrained import get_model; get_model('htdemucs')"
+
+# Download the fine-tuned model (requires more RAM)
+python -c "import torch; from demucs.pretrained import get_model; get_model('htdemucs_ft')"
+```
 
 ---
 
@@ -179,6 +246,9 @@ python3 -m venv venv
 source venv/bin/activate
 pip install --upgrade pip
 pip install -r requirements.txt
+
+# If stem separation fails with "TorchCodec is required", install torchcodec:
+# pip install torchcodec
 ```
 
 ---
@@ -235,7 +305,10 @@ After=network.target
 User=apitools
 Group=apitools
 WorkingDirectory=/var/www/apitools
-Environment="PATH=/var/www/apitools/venv/bin"
+Environment="PATH=/var/www/apitools/venv/bin:/usr/local/bin:/usr/bin:/bin"
+Environment="ALLOWED_ORIGINS=http://localhost:3000,http://localhost:8080"
+## Optional: restrict Demucs models on this server only
+# Environment="DEMUCS_MODELS_ALLOWLIST=htdemucs"
 ExecStart=/var/www/apitools/venv/bin/uvicorn main:app --host=127.0.0.1 --port=8000
 Restart=always
 
@@ -243,7 +316,7 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-> **Note:** We use `--host=127.0.0.1` because Nginx will handle external traffic.
+> **Note:** We use `--host=127.0.0.1` because Nginx will handle external traffic. The PATH includes system directories so the service can find `ffmpeg`. The `ALLOWED_ORIGINS` setting enables CORS for frontend applications (add your production frontend URL if needed).
 
 Enable and start the service:
 
@@ -262,64 +335,45 @@ sudo systemctl status music-tools-api
 
 🖥️ **Server** | 👤 **root/sudo**
 
-Create the Nginx config with security hardening:
+Create the Nginx config:
 ```bash
 sudo nano /etc/nginx/sites-available/music-tools-api
 ```
 
-Paste the following production-ready configuration with HTTP/2, HTTPS redirection, and security headers:
+Paste the following configuration. **Note:** CORS is handled by FastAPI via the `ALLOWED_ORIGINS` environment variable, so Nginx just proxies requests cleanly.
 
 ```nginx
-# HTTP to HTTPS redirect (port 80)
+# HTTP to HTTPS redirect (managed by Certbot)
 server {
     listen 80;
-    listen [::]:80;
     server_name apitools.bahar.co.il;
 
-    # Allow Let's Encrypt ACME challenges
-    location /.well-known/acme-challenge/ {
-        root /var/www/certbot;
+    if ($host = apitools.bahar.co.il) {
+        return 301 https://$host$request_uri;
     }
 
-    # Redirect all other traffic to HTTPS
-    location / {
-        return 301 https://$server_name$request_uri;
-    }
+    return 404;
 }
 
-# HTTPS primary server (port 443)
+# HTTPS server
 server {
-    listen 443 ssl http2;
-    listen [::]:443 ssl http2;
+    listen 443 ssl;
     server_name apitools.bahar.co.il;
 
-    # SSL Certificate configuration (set by Certbot)
+    # SSL (managed by Certbot)
     ssl_certificate /etc/letsencrypt/live/apitools.bahar.co.il/fullchain.pem;
     ssl_certificate_key /etc/letsencrypt/live/apitools.bahar.co.il/privkey.pem;
+    include /etc/letsencrypt/options-ssl-nginx.conf;
+    ssl_dhparam /etc/letsencrypt/ssl-dhparams.pem;
 
-    # Security: TLS 1.2 and 1.3 only
-    ssl_protocols TLSv1.2 TLSv1.3;
-    ssl_ciphers HIGH:!aNULL:!MD5:!3DES:!DES:!RC4:!IDEA:!SEED:!aDSS:!SRP:!PSK;
-    ssl_prefer_server_ciphers on;
-    ssl_session_cache shared:SSL:10m;
-    ssl_session_timeout 10m;
-
-    # Security headers
-    add_header Strict-Transport-Security "max-age=31536000; includeSubDomains" always;
-    add_header X-Content-Type-Options "nosniff" always;
-    add_header X-Frame-Options "DENY" always;
-    add_header X-XSS-Protection "1; mode=block" always;
-    add_header Permissions-Policy "geolocation=(), microphone=(), camera=()" always;
+    # Allow large file uploads (100MB for audio files)
+    client_max_body_size 100M;
 
     # Logging
     access_log /var/log/nginx/music-tools-api-access.log;
     error_log /var/log/nginx/music-tools-api-error.log;
 
-    # Rate limiting zones
-    limit_req_zone $binary_remote_addr zone=api_light:10m rate=30r/m;
-    limit_req_zone $binary_remote_addr zone=api_heavy:10m rate=5r/m;
-
-    # Health check endpoint (no rate limit)
+    # Health check endpoint
     location /health {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
@@ -328,9 +382,47 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Light operations (info endpoints, downloads)
-    location ~ ^/api/v1/(youtube-info|models|formats|stats|download) {
-        limit_req zone=api_light burst=5 nodelay;
+    # YouTube info (lightweight)
+    location /api/v1/youtube-info {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 60s;
+    }
+
+    # YouTube to MP3 (heavy operation)
+    location /api/v1/youtube-to-mp3 {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 600s;
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 600s;
+    }
+
+    # Stem separation (heavy operation - file upload)
+    location /api/v1/separate-stems {
+        proxy_pass http://127.0.0.1:8000;
+        # Use HTTP/1.1 to support streaming uploads (chunked) when request buffering is disabled.
+        proxy_http_version 1.1;
+        proxy_set_header Connection "";
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 1800s;  # 30 min for stem separation
+        proxy_connect_timeout 30s;
+        proxy_send_timeout 300s;
+        proxy_request_buffering off;
+        proxy_buffering off;
+    }
+
+    # Models list
+    location /api/v1/models {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
@@ -338,16 +430,33 @@ server {
         proxy_set_header X-Forwarded-Proto $scheme;
     }
 
-    # Heavy operations (conversions, stem separation)
-    location ~ ^/api/v1/(youtube-to-mp3|separate-stems) {
-        limit_req zone=api_heavy burst=2 nodelay;
+    # Formats list
+    location /api/v1/formats {
         proxy_pass http://127.0.0.1:8000;
         proxy_set_header Host $host;
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-        proxy_read_timeout 600s;
-        proxy_connect_timeout 10s;
+    }
+
+    # File downloads
+    location /api/v1/download {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+        proxy_read_timeout 300s;
+        proxy_buffering off;
+    }
+
+    # Stats endpoint
+    location /api/v1/stats {
+        proxy_pass http://127.0.0.1:8000;
+        proxy_set_header Host $host;
+        proxy_set_header X-Real-IP $remote_addr;
+        proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
     }
 
     # Catch-all for remaining API endpoints
@@ -357,11 +466,7 @@ server {
         proxy_set_header X-Real-IP $remote_addr;
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
-    }
-
-    # API documentation (disabled in production)
-    location ~ ^/(docs|redoc|openapi.json) {
-        return 403;
+        proxy_read_timeout 120s;
     }
 
     # Default location
@@ -382,18 +487,16 @@ Enable the config and restart Nginx:
 ```bash
 sudo ln -s /etc/nginx/sites-available/music-tools-api /etc/nginx/sites-enabled/
 sudo nginx -t
-sudo systemctl restart nginx
+sudo systemctl reload nginx
 ```
 
-> **Security Features in This Configuration:**
+> **Configuration Features:**
 > - ✅ Automatic HTTP → HTTPS redirect
-> - ✅ TLS 1.2 and 1.3 only (no legacy protocols)
-> - ✅ Strong cipher suites with ChaCha20-Poly1305 support
-> - ✅ HSTS header (HTTP Strict Transport Security) for 1 year
-> - ✅ X-Content-Type-Options, X-Frame-Options, and CSP headers
-> - ✅ Rate limiting per endpoint type (light vs heavy operations)
-> - ✅ API documentation endpoints (`/docs`, `/redoc`) disabled by default
-> - ✅ Long proxy timeouts for heavy operations (stem separation)
+> - ✅ SSL managed by Certbot (auto-renewal)
+> - ✅ Large file upload support (100MB) for audio processing
+> - ✅ Extended timeouts for heavy operations (stem separation: 30 min)
+> - ✅ Disabled buffering for file uploads/downloads
+> - ✅ CORS handled by FastAPI (via `ALLOWED_ORIGINS` env var)
 
 💻 **Localhost** | 👤 **your user**
 
@@ -496,10 +599,42 @@ tail -f /var/log/nginx/access.log /var/log/nginx/error.log
 ## 11. Security & Maintenance
 
 ### API Documentation Access
-- Interactive documentation (`/docs`, `/redoc`) is disabled on production servers
+- Interactive documentation (`/docs`, `/redoc`) is disabled on production servers by default
 - Set `DEBUG=true` only in development environments
-- In production with `DEBUG=false`, API documentation endpoints return 403 Forbidden
+- In production with `DEBUG=false`, API documentation endpoints are not mounted (you will see 404 Not Found)
 - Use client libraries or API integration guides for production integrations
+
+### Server-only model restriction (recommended)
+
+If your server is RAM/disk constrained, you can disable heavy Demucs models **only on the server** via systemd.
+
+🖥️ **Server** | 👤 **root/sudo**
+
+Preferred (drop-in override; survives package/file updates):
+
+```bash
+sudo systemctl edit music-tools-api
+```
+
+In the editor, add:
+
+```ini
+[Service]
+Environment="DEMUCS_MODELS_ALLOWLIST=htdemucs"
+```
+
+Then apply:
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl restart music-tools-api
+```
+
+Verify:
+
+```bash
+curl -s https://apitools.bahar.co.il/api/v1/models
+```
 
 ### Firewall Best Practices
 - Only open ports 22 (SSH), 80 (HTTP), 443 (HTTPS)
@@ -577,3 +712,103 @@ The script will:
 - SSH config with `Host apitools` pointing to your server
 - `apitools` user with sudo access on the server
 - Initial deployment completed (venv created, systemd configured)
+
+---
+
+## Troubleshooting
+
+### OOM Kill (Out of Memory)
+
+**Symptom:** Stem separation fails with "oom-kill" in logs:
+```
+music-tools-api.service: A process of this unit has been killed by the OOM killer.
+music-tools-api.service: Failed with result 'oom-kill'.
+```
+
+**Solutions:**
+1. **Add swap space** (see Section 2.5)
+2. **Use a lighter model** — Select `htdemucs` instead of `htdemucs_ft`
+3. **Upgrade server RAM** — 4GB+ recommended for stem separation
+
+### Check Memory Status
+
+```bash
+# View memory and swap usage
+free -h
+
+# View detailed memory info
+cat /proc/meminfo | grep -E "(MemTotal|MemFree|MemAvailable|SwapTotal|SwapFree)"
+
+# Monitor memory in real-time
+watch -n 1 free -h
+
+```
+
+### No Space Left on Device (Disk Full)
+
+**Symptom:** Stem separation fails after a long run with:
+`RuntimeError: ... No space left on device`
+
+Demucs writes **temporary WAV stems** into `/var/www/apitools/temp` before conversion. Even if the input file is small (e.g. 11MB MP3), the temporary WAV outputs can be **hundreds of MB to multiple GB** depending on track duration.
+
+**Check disk usage:**
+```bash
+df -h
+sudo du -sh /var/www/apitools/temp /var/www/apitools/outputs /var/www/apitools/uploads || true
+```
+
+**Quick cleanup (safe):**
+```bash
+sudo find /var/www/apitools/temp -mindepth 1 -maxdepth 1 -type d -mtime +1 -exec rm -rf {} +
+sudo find /var/www/apitools/outputs -mindepth 1 -maxdepth 1 -type d -mtime +2 -exec rm -rf {} +
+```
+
+**Recommendation:** Keep **at least 3–5GB free** for `htdemucs_ft` jobs. Use `htdemucs` on smaller disks.
+
+### Service Won't Start
+
+```bash
+# Check service status
+sudo systemctl status music-tools-api
+
+# View recent logs
+sudo journalctl -u music-tools-api -n 50 --no-pager
+
+# Check for Python errors
+sudo journalctl -u music-tools-api | grep -i error
+```
+
+### CORS Errors
+
+If you see CORS errors from a frontend:
+
+1. Verify `ALLOWED_ORIGINS` in systemd service includes your frontend URL
+2. Restart the service after changes:
+   ```bash
+   sudo systemctl daemon-reload
+   sudo systemctl restart music-tools-api
+   ```
+
+### 413 Request Entity Too Large
+
+Nginx is blocking large file uploads:
+
+```bash
+# Check current client_max_body_size in nginx config
+grep client_max_body_size /etc/nginx/sites-available/music-tools-api
+
+# Should be: client_max_body_size 100M;
+```
+
+### SSL Certificate Issues
+
+```bash
+# Test certificate renewal
+sudo certbot renew --dry-run
+
+# Force renewal
+sudo certbot renew --force-renewal
+
+# Check certificate expiry
+sudo certbot certificates
+```

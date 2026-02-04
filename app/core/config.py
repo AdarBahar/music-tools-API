@@ -56,17 +56,33 @@ class Settings(BaseSettings):
     DEFAULT_AUDIO_QUALITY: int = 0  # 0 = best, 10 = worst
     DEFAULT_AUDIO_FORMAT: str = "mp3"
     SUPPORTED_AUDIO_FORMATS: list = ["mp3", "m4a", "wav", "flac", "aac", "opus"]
+    YOUTUBE_COOKIES_FILE: str = ""  # Optional: Path to cookies file for YouTube authentication
     
     # Demucs Settings
     DEFAULT_DEMUCS_MODEL: str = "htdemucs"
+    # Default supported models. Can be overridden in production with DEMUCS_MODELS_ALLOWLIST.
     SUPPORTED_DEMUCS_MODELS: list = [
         "htdemucs",
         "htdemucs_ft", 
         "mdx_extra",
         "mdx_extra_q"
     ]
+    # Optional comma-separated allowlist (server-only override).
+    # Example: "htdemucs,mdx_extra_q" to disable heavier models.
+    DEMUCS_MODELS_ALLOWLIST: str = ""
     DEFAULT_STEM_FORMAT: str = "mp3"
     SUPPORTED_STEM_FORMATS: list = ["wav", "mp3", "flac"]
+
+    @property
+    def supported_demucs_models_list(self) -> list:
+        """Return supported Demucs models, optionally overridden by env allowlist."""
+        if not self.DEMUCS_MODELS_ALLOWLIST:
+            return self.SUPPORTED_DEMUCS_MODELS
+
+        models = [m.strip() for m in self.DEMUCS_MODELS_ALLOWLIST.split(",") if m.strip()]
+        # Keep only models that exist in the default list (prevents typos enabling arbitrary strings).
+        allowed = [m for m in models if m in self.SUPPORTED_DEMUCS_MODELS]
+        return allowed if allowed else self.SUPPORTED_DEMUCS_MODELS
     
     # Request Timeout Settings (in seconds)
     API_REQUEST_TIMEOUT: int = 120  # 2 minutes for regular API requests

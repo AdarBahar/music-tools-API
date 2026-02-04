@@ -61,3 +61,6 @@ logs/
 # Distribution directories
 /dist
 /build
+
+# Generated deployment archives
+music-tools-api-dist.*

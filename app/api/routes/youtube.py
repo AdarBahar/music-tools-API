@@ -99,7 +99,8 @@ async def _schedule_file_cleanup(file_path: str, delay_hours: int):
         logger.warning(f"Background cleanup failed for file: {file_path}")
 
 
-@limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else lambda f: f@router.post(
+@(limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else (lambda f: f))
+@router.post(
     "/youtube-to-mp3",
     response_model=YouTubeToMP3Response,
     summary="Convert YouTube video to MP3",

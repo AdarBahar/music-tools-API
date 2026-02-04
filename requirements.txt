@@ -17,6 +17,7 @@ demucs>=4.0.0,<5.0.0
 soundfile>=0.12.1
 # torchaudio installation often conflicts with demucs, install manually if needed
 torchaudio>=0.12.0
+torchcodec
 
 # Memory Management
 psutil>=5.9.0

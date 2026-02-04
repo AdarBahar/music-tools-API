@@ -212,6 +212,38 @@ async def security_middleware(request: Request, call_next):
         raise
 
 
+@app.middleware("http")
+async def log_bad_requests_middleware(request: Request, call_next):
+    """Log extra context for 400/422 responses (especially multipart uploads).
+
+    This is intentionally narrow to avoid noisy logs: we only emit for
+    `/api/v1/separate-stems` and only on 400/422.
+    """
+    response = await call_next(request)
+
+    path = request.url.path
+    if path == "/api/v1/separate-stems" and response.status_code in (400, 422):
+        uvicorn_logger = logging.getLogger("uvicorn.error")
+        headers = request.headers
+        http_version = request.scope.get("http_version")
+
+        uvicorn_logger.warning(
+            "Bad request to %s %s (status=%s, http=%s, ct=%s, cl=%s, te=%s, origin=%s, ua=%s, xff=%s)",
+            request.method,
+            path,
+            response.status_code,
+            http_version,
+            headers.get("content-type"),
+            headers.get("content-length"),
+            headers.get("transfer-encoding"),
+            headers.get("origin"),
+            headers.get("user-agent"),
+            headers.get("x-forwarded-for"),
+        )
+
+    return response
+
+
 # Add timeout middleware for API requests
 @app.middleware("http") 
 async def timeout_middleware(request: Request, call_next):
@@ -265,15 +297,18 @@ async def root(request: Request):
     Returns basic information about the Music Tools API service including
     available endpoints and documentation links.
     """
+    documentation = {
+        "enabled": bool(settings.DEBUG),
+        "swagger_ui": "/docs" if settings.DEBUG else None,
+        "redoc": "/redoc" if settings.DEBUG else None,
+    }
+
     return {
         "name": "Music Tools API",
         "description": "Standalone audio processing service for YouTube to MP3 conversion and AI-powered stem separation",
         "version": "1.0.0",
         "status": "running",
-        "documentation": {
-            "swagger_ui": "/docs",
-            "redoc": "/redoc"
-        },
+        "documentation": documentation,
         "endpoints": {
             "youtube_to_mp3": "/api/v1/youtube-to-mp3",
             "youtube_info": "/api/v1/youtube-info",

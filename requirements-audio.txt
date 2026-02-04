@@ -7,6 +7,7 @@
 # For CUDA: pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
 torch>=1.12.0
 torchaudio>=0.12.0
+torchcodec
 
 # Demucs for stem separation (may require manual installation)
 # If automatic install fails, try: pip install demucs --no-deps

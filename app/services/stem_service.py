@@ -8,6 +8,7 @@ import time
 import logging
 import tempfile
 import subprocess
+import shutil
 from pathlib import Path
 from typing import Dict, Any, List, Optional
 
@@ -51,9 +52,10 @@ class StemSeparationService:
         cleaned_model = ''.join(c for c in model if c.isalnum() or c in '-_.')
         
         # Validate against whitelist
-        if cleaned_model not in settings.SUPPORTED_DEMUCS_MODELS:
-            logger.error(f"Security validation failed: Invalid model '{cleaned_model}'. Supported models: {settings.SUPPORTED_DEMUCS_MODELS}")
-            raise SecurityError(f"Invalid model '{cleaned_model}'. Supported models: {settings.SUPPORTED_DEMUCS_MODELS}")
+        supported_models = settings.supported_demucs_models_list
+        if cleaned_model not in supported_models:
+            logger.error(f"Security validation failed: Invalid model '{cleaned_model}'. Supported models: {supported_models}")
+            raise SecurityError(f"Invalid model '{cleaned_model}'. Supported models: {supported_models}")
         
         logger.debug(f"Model validation passed: {cleaned_model}")
         return cleaned_model
@@ -83,6 +85,10 @@ class StemSeparationService:
             path_str = str(path)
             
             # Define allowed directories (temporary directories and uploads)
+            base_dir = str(settings.BASE_DIR.resolve())
+            temp_dir = str(settings.TEMP_DIR.resolve())
+            output_dir = str(settings.OUTPUT_DIR.resolve())
+            upload_dir = str(settings.UPLOAD_DIR.resolve())
             allowed_prefixes = [
                 '/tmp/',
                 '/var/folders/',  # macOS temp directories
@@ -90,6 +96,10 @@ class StemSeparationService:
                 '/private/tmp/',  # macOS temp directories (resolved)
                 str(Path.cwd()),  # Current working directory
                 tempfile.gettempdir(),  # System temp directory
+                base_dir,
+                temp_dir,
+                output_dir,
+                upload_dir,
             ]
             
             # Check if path is in allowed directories
@@ -138,6 +148,73 @@ class StemSeparationService:
             raise SecurityError(f"Invalid format '{cleaned_format}'. Supported: {settings.SUPPORTED_STEM_FORMATS}")
         
         return cleaned_format
+
+    def _ensure_disk_space(self, path: Path, required_bytes: int, label: str) -> None:
+        """Ensure filesystem containing `path` has `required_bytes` free."""
+        try:
+            usage = shutil.disk_usage(str(path))
+            if usage.free < required_bytes:
+                free_mb = usage.free / (1024 * 1024)
+                req_mb = required_bytes / (1024 * 1024)
+                raise SecurityError(
+                    f"Insufficient disk space in {label} ({path}). "
+                    f"Free: {free_mb:.0f}MB, required (estimate): {req_mb:.0f}MB. "
+                    f"Clean up /var/www/apitools/temp and /var/www/apitools/outputs or move TEMP_DIR/OUTPUT_DIR to a larger disk."
+                )
+        except FileNotFoundError:
+            # If the directory doesn't exist yet, let upstream create it.
+            return
+        except SecurityError:
+            raise
+        except Exception as e:
+            logger.warning(f"Disk space check failed for {label} at {path}: {type(e).__name__}")
+
+    def _estimate_required_temp_bytes(self, audio_path: Path, stem_count: int) -> Optional[int]:
+        """Estimate temp bytes needed for Demucs WAV stems.
+
+        Uses ffprobe to get duration quickly without decoding full audio.
+        Returns None if duration can't be determined.
+        """
+        try:
+            # ffprobe returns duration in seconds (float)
+            probe = subprocess.run(
+                [
+                    "ffprobe",
+                    "-v",
+                    "error",
+                    "-show_entries",
+                    "format=duration",
+                    "-of",
+                    "default=noprint_wrappers=1:nokey=1",
+                    str(audio_path),
+                ],
+                capture_output=True,
+                text=True,
+                timeout=10,
+            )
+            if probe.returncode != 0:
+                return None
+            duration_s = float((probe.stdout or "").strip())
+            if duration_s <= 0:
+                return None
+
+            # Conservative estimate: float32 WAV, stereo, 44.1kHz
+            sample_rate = 44100
+            channels = 2
+            bytes_per_sample = 4
+            bytes_per_second_per_stem = sample_rate * channels * bytes_per_sample
+
+            # Add headroom: demucs writes multiple files and there is container overhead.
+            safety_factor = 2.0
+            base = duration_s * bytes_per_second_per_stem * max(1, stem_count)
+            return int(base * safety_factor)
+        except (ValueError, TimeoutError):
+            return None
+        except FileNotFoundError:
+            # ffprobe not installed
+            return None
+        except Exception:
+            return None
     
     async def separate_stems(
         self,
@@ -185,6 +262,14 @@ class StemSeparationService:
             
             logger.info(f"Starting stem separation: model={validated_model}, format={validated_format}, stems={validated_stems}")
             logger.info(f"File size: {file_size / 1024 / 1024:.1f}MB, estimated memory: {estimated_memory}MB")
+
+            # Fail fast if we don't have enough disk space for Demucs WAV outputs.
+            # Demucs writes WAV stems into TEMP_DIR before we convert/move them.
+            required_temp_bytes = self._estimate_required_temp_bytes(validated_audio_path, stem_count=len(validated_stems) if validated_stems else 4)
+            if required_temp_bytes is not None:
+                self._ensure_disk_space(Path(self.temp_dir), required_temp_bytes, label="TEMP_DIR")
+            # Also ensure some space in OUTPUT_DIR for final converted stems.
+            self._ensure_disk_space(Path(self.output_dir), 256 * 1024 * 1024, label="OUTPUT_DIR")
             
             # Acquire operation slot with memory check
             async with operation_limiter.acquire_operation_slot(f"stem_separation_{job_id}", estimated_memory):
