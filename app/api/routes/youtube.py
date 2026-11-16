@@ -7,22 +7,18 @@ import re
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.models.requests import YouTubeToMP3Request
 from app.models.responses import YouTubeToMP3Response, ErrorResponse
 from app.services.youtube_service import YouTubeService
 from app.core.auth import verify_api_key
 from app.core.config import settings
+from app.core.rate_limit import limit
 from app.core.cleanup import cleanup_file
 from app.core.metrics import MetricsContext
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# Initialize limiter for this module
-limiter = Limiter(key_func=get_remote_address) if settings.ENABLE_RATE_LIMITING else None
 
 
 def validate_youtube_url(url: str) -> bool:
@@ -99,7 +95,6 @@ async def _schedule_file_cleanup(file_path: str, delay_hours: int):
         logger.warning(f"Background cleanup failed for file: {file_path}")
 
 
-@(limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else (lambda f: f))
 @router.post(
     "/youtube-to-mp3",
     response_model=YouTubeToMP3Response,
@@ -118,6 +113,7 @@ async def _schedule_file_cleanup(file_path: str, delay_hours: int):
     """,
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_HEAVY_OPERATIONS)
 async def youtube_to_mp3(
     request: Request,
     background_tasks: BackgroundTasks,

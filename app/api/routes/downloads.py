@@ -9,19 +9,15 @@ from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Response, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.core.config import settings
+from app.core.rate_limit import limit
 from app.core.cleanup import get_directory_stats, cleanup_all_directories
 from app.models.responses import DownloadInfo, StatsResponse
 from app.core.auth import verify_api_key
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
-
-# Initialize limiter for this module
-limiter = Limiter(key_func=get_remote_address) if settings.ENABLE_RATE_LIMITING else None
 
 
 def _validate_uuid(value: str, param_name: str = "identifier") -> None:
@@ -81,13 +77,13 @@ def _ensure_path_within_directory(file_path: Path, allowed_dir: Path) -> None:
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_LIGHT_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/download/{file_id}",
     summary="Download converted audio file",
     description="Download a converted audio file by its file ID. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_LIGHT_OPERATIONS)
 async def download_file(request: Request, file_id: str):
     """
     Download a converted audio file
@@ -145,13 +141,13 @@ async def download_file(request: Request, file_id: str):
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_LIGHT_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/download/{job_id}/{filename}",
     summary="Download specific stem file",
     description="Download a specific stem file from a separation job. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_LIGHT_OPERATIONS)
 async def download_stem_file(request: Request, job_id: str, filename: str):
     """
     Download a specific stem file
@@ -199,7 +195,6 @@ async def download_stem_file(request: Request, job_id: str, filename: str):
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/download/{file_id}/info",
     response_model=DownloadInfo,
@@ -207,6 +202,7 @@ async def download_stem_file(request: Request, job_id: str, filename: str):
     description="Get information about a downloadable file. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
     """
     Get information about a file
@@ -255,7 +251,6 @@ async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/stats",
     response_model=StatsResponse,
@@ -263,6 +258,7 @@ async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
     description="Get statistics about file storage and cleanup status. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def get_storage_stats(request: Request) -> StatsResponse:
     """
     Get storage statistics

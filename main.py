@@ -24,12 +24,12 @@ from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api.routes import youtube, stems, downloads
 from app.core.config import settings
+from app.core.rate_limit import limiter, limit
 from app.core.cleanup import start_cleanup_scheduler
 from app.core.auth import log_security_event
 from app.core.metrics import init_metrics, record_request, update_memory_metrics
@@ -52,23 +52,6 @@ security_handler.setFormatter(
 )
 security_logger.addHandler(security_handler)
 security_logger.setLevel(logging.INFO)
-
-# Initialize rate limiter if enabled
-limiter = None
-if settings.ENABLE_RATE_LIMITING:
-    try:
-        limiter = Limiter(
-            key_func=get_remote_address,
-            storage_uri=settings.RATE_LIMIT_STORAGE_URI,
-            default_limits=["100/minute"]
-        )
-        logger.info("Rate limiting enabled with Redis storage")
-    except Exception as e:
-        logger.warning(f"Failed to initialize rate limiter: {type(e).__name__}. Rate limiting disabled.")
-        limiter = None
-else:
-    logger.info("Rate limiting disabled in configuration")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -288,8 +271,8 @@ app.include_router(downloads.router, prefix="/api/v1", tags=["Downloads"])
 app.mount("/static", StaticFiles(directory=settings.OUTPUT_DIR), name="static")
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @app.get("/")
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def root(request: Request):
     """
     Root endpoint with API information
@@ -328,8 +311,8 @@ async def root(request: Request):
     }
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @app.get("/health")
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def health_check(request: Request):
     """
     Comprehensive health check endpoint

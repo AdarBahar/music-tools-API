@@ -8,10 +8,9 @@ import tempfile
 from typing import Optional, List
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.core.config import settings
+from app.core.rate_limit import limit
 from app.models.responses import StemSeparationResponse, StemFiles
 from app.services.stem_service import StemSeparationService, SecurityError
 from app.core.auth import verify_api_key
@@ -25,9 +24,6 @@ from app.core.upload_validation import upload_validator
 # Use Uvicorn's configured logger so logs reliably appear in journalctl/systemd.
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
-
-# Initialize limiter for this module
-limiter = Limiter(key_func=get_remote_address) if settings.ENABLE_RATE_LIMITING else None
 
 
 async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
@@ -49,7 +45,6 @@ async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
     logger.info(f"Background cleanup removed {cleaned_count}/{len(stem_file_paths)} stem files")
 
 
-@(limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else (lambda f: f))
 @router.post(
     "/separate-stems",
     response_model=StemSeparationResponse,
@@ -57,6 +52,7 @@ async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
     description="Upload an audio file and separate it into individual stems (vocals, drums, bass, other) using AI. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_HEAVY_OPERATIONS)
 async def separate_stems(
     request: Request,
     background_tasks: BackgroundTasks,
@@ -212,13 +208,13 @@ async def separate_stems(
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/models",
     summary="Get available Demucs models",
     description="List all available Demucs models for stem separation. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def get_available_models(request: Request):
     """
     Get list of available Demucs models
