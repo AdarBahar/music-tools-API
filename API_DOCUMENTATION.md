@@ -474,7 +474,7 @@ Get file information.
   "filename": "audio_file.mp3",
   "file_size_mb": 3.45,
   "content_type": "audio/mpeg",
-  "created_at": "1634567890.123"
+  "created_at": "2021-10-18T14:11:30.123000Z"
 }
 ```
 

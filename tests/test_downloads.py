@@ -1,3 +1,4 @@
+from datetime import datetime, timezone
 import uuid
 
 from app.api.routes.downloads import _display_name
@@ -37,6 +38,9 @@ def test_info_route_is_reachable(client, auth, out_dir):
     r = client.get(f"/api/v1/download/{file_id}/info", headers=auth)
     assert r.status_code == 200
     assert r.json()["filename"] == "Info Song.mp3"
+    created = datetime.fromisoformat(r.json()["created_at"])
+    assert created.tzinfo is not None  # an ISO 8601 time with a UTC offset, not an epoch number
+    assert abs((datetime.now(timezone.utc) - created).total_seconds()) < 60
 
 
 def test_stem_file_route_still_works(client, auth, out_dir):

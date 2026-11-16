@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The compose service name matches the Nginx upstream. `psutil`, `slowapi` and `prometheus-client` are in the core dependency lists.
 
 ### Changed
+- `GET /api/v1/download/{file_id}/info` returns `created_at` as an ISO 8601 UTC time (for example `2021-10-18T14:11:30Z`). It was an epoch number in a string.
 - Pydantic V2 style: `@field_validator`, `json_schema_extra` and `SettingsConfigDict`. The deprecation warnings are gone. `/health` uses a timezone-aware timestamp. The value now ends with `+00:00`. A monitor that parses the old format must accept this suffix.
 - The three old print scripts in the repository root are removed. The new `tests/test_models.py` checks the request models.
 - The one-time report files moved to `docs/`.
