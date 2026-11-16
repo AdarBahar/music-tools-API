@@ -22,7 +22,6 @@ import logging
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
 from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
@@ -267,8 +266,8 @@ app.include_router(youtube.router, prefix="/api/v1", tags=["YouTube"])
 app.include_router(stems.router, prefix="/api/v1", tags=["Stem Separation"])
 app.include_router(downloads.router, prefix="/api/v1", tags=["Downloads"])
 
-# Mount static files for downloads
-app.mount("/static", StaticFiles(directory=settings.OUTPUT_DIR), name="static")
+# Output files are NOT mounted as static files. A static mount skips API key
+# authentication. Use the authenticated /api/v1/download routes instead.
 
 
 @app.get("/")
