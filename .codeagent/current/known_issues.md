@@ -15,11 +15,6 @@ This file lists the open problems. The review of 2026-11-16 closed the security,
 - **Nginx `/downloads/` alias**: `nginx.conf` can serve the output directory without an API key. Check that `/var/www/downloads` does not point to the output directory.
 - **Real Demucs test**: the automated tests use a fake Demucs. Run one real separation on the server after each deployment change.
 
-### Technical debt
-- **Old root test scripts**: `test_auth.py`, `test_naming_convention.py` and `test_stems_default_behavior.py` are print scripts. Pytest ignores them. The `tests/` folder has the real tests.
-- **Pydantic V1 validators**: `app/models/requests.py` uses `@validator`, which is deprecated.
-- **Old report files**: the repository root has several one-time report files (`code_review_*.md`, `SECURITY_FIXES_*.md` and others). Move them to `docs/`.
-
 ## Upstream dependencies
 
 - **yt-dlp**: YouTube changes can break downloads. Update yt-dlp often.

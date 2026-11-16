@@ -21,6 +21,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The key comparison is constant-time.
 - The compose service name matches the Nginx upstream. `psutil`, `slowapi` and `prometheus-client` are in the core dependency lists.
 
+### Changed
+- Pydantic V2 style: `@field_validator`, `json_schema_extra` and `SettingsConfigDict`. The deprecation warnings are gone. `/health` uses a timezone-aware timestamp.
+- The three old print scripts in the repository root are removed. The new `tests/test_models.py` checks the request models.
+- The one-time report files moved to `docs/`.
+
 ### Security
 - **BREAKING**: Removed the unauthenticated `/static` mount. Use `/api/v1/download/...`.
 - **BREAKING**: `/metrics` needs the `X-API-Key` header when `REQUIRE_API_KEY=true`.

@@ -312,14 +312,14 @@ async def health_check(request: Request):
     - Memory usage
     - System dependencies
     """
-    from datetime import datetime
+    from datetime import datetime, timezone
     import shutil
     from fastapi.responses import JSONResponse
     
     health_status = {
         "status": "healthy",
         "service": "music-tools-api",
-        "timestamp": datetime.utcnow().isoformat(),
+        "timestamp": datetime.now(timezone.utc).isoformat(),
         "version": "1.0.0",
         "checks": {}
     }
