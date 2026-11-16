@@ -130,8 +130,12 @@ class YouTubeService:
                     raise FileNotFoundError("Downloaded file not found")
                 
                 # Move to output directory with proper filename
+                # The stored name starts with file_id so the download route can find it.
                 final_filename = self._generate_filename(metadata, file_id, audio_format)
                 final_path = self.output_dir / final_filename
+                display_filename = final_filename[len(file_id):].lstrip(" -")
+                if not display_filename or display_filename.startswith("."):
+                    display_filename = f"audio{display_filename}"
                 
                 # Ensure output directory exists
                 self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +149,7 @@ class YouTubeService:
                 return {
                     'success': True,
                     'file_id': file_id,
-                    'filename': final_filename,
+                    'filename': display_filename,
                     'file_path': final_path,
                     'file_size_mb': round(file_size_mb, 2),
                     'metadata': metadata
@@ -194,8 +198,8 @@ class YouTubeService:
             # Clean the title for use as filename
             safe_title = "".join(c for c in metadata.title if c.isalnum() or c in (' ', '-', '_', '.', '(', ')')).strip()
             safe_title = safe_title[:200]  # Increased length limit for full titles
-            filename = f"{safe_title}.{audio_format}"
+            filename = f"{file_id} - {safe_title}.{audio_format}" if safe_title else f"{file_id}.{audio_format}"
         else:
-            filename = f"audio_{file_id}.{audio_format}"
+            filename = f"{file_id}.{audio_format}"
 
         return filename

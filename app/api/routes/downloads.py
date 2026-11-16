@@ -122,9 +122,16 @@ async def download_file(request: Request, file_id: str):
         # Determine content type based on file extension
         content_type = _get_content_type(file_path.suffix)
 
+        # Remove the "<file_id> - " storage prefix from the name the user sees.
+        display_name = file_path.name
+        if display_name.startswith(file_id):
+            display_name = display_name[len(file_id):].lstrip(" -")
+            if not display_name or display_name.startswith("."):
+                display_name = f"audio{display_name}"
+
         return FileResponse(
             path=str(file_path),
-            filename=file_path.name,
+            filename=display_name,
             media_type=content_type
         )
 
