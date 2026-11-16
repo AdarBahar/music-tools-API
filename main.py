@@ -20,7 +20,7 @@ Version: 1.0.0
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from dotenv import load_dotenv
 from slowapi import _rate_limit_exceeded_handler
@@ -30,7 +30,7 @@ from app.api.routes import youtube, stems, downloads
 from app.core.config import settings
 from app.core.rate_limit import limiter, limit
 from app.core.cleanup import start_cleanup_scheduler
-from app.core.auth import log_security_event
+from app.core.auth import log_security_event, verify_api_key, has_detail_access
 from app.core.metrics import init_metrics, record_request, update_memory_metrics
 
 # Load environment variables
@@ -134,6 +134,17 @@ if limiter:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     logger.info("Rate limiting middleware configured")
 
+def _metrics_endpoint(request: Request) -> str:
+    """Return the route template (for example /api/v1/download/{file_id}).
+
+    The raw path has an ID in it. A label with an ID creates a new series
+    for each request, so memory use grows without limit.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path if path else "unmatched"
+
+
 # Add metrics middleware
 @app.middleware("http")
 async def metrics_middleware(request: Request, call_next):
@@ -150,7 +161,7 @@ async def metrics_middleware(request: Request, call_next):
         
         # Record request metrics
         duration = time.time() - start_time
-        endpoint = request.url.path
+        endpoint = _metrics_endpoint(request)
         method = request.method
         status_code = response.status_code
         
@@ -161,7 +172,7 @@ async def metrics_middleware(request: Request, call_next):
     except Exception as e:
         # Record error metrics
         duration = time.time() - start_time
-        endpoint = request.url.path 
+        endpoint = _metrics_endpoint(request)
         method = request.method
         
         record_request(method, endpoint, 500, duration)
@@ -310,6 +321,18 @@ async def root(request: Request):
     }
 
 
+def _redact_url(url: str) -> str:
+    """Remove the user name and password from a URL."""
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(url)
+    if parts.username or parts.password:
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        parts = parts._replace(netloc=f"***@{host}")
+    return urlunsplit(parts)
+
+
 @app.get("/health")
 @limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def health_check(request: Request):
@@ -344,7 +367,7 @@ async def health_check(request: Request):
             await redis_client.ping()
             health_status["checks"]["redis"] = {
                 "status": "healthy",
-                "url": settings.REDIS_URL
+                "url": _redact_url(settings.REDIS_URL)
             }
             await redis_client.close()
         except ImportError:
@@ -356,7 +379,7 @@ async def health_check(request: Request):
             health_status["checks"]["redis"] = {
                 "status": "unhealthy", 
                 "error": str(e),
-                "url": settings.REDIS_URL
+                "url": _redact_url(settings.REDIS_URL)
             }
             health_status["status"] = "unhealthy"
     else:
@@ -449,6 +472,14 @@ async def health_check(request: Request):
             }
             health_status["status"] = "unhealthy"
     
+    # Callers without a valid key get the status only. Paths, URLs and error
+    # text stay private.
+    if not has_detail_access(request.headers.get(settings.API_KEY_HEADER)):
+        health_status["checks"] = {
+            name: {"status": check.get("status")}
+            for name, check in health_status["checks"].items()
+        }
+
     # Return appropriate HTTP status code
     status_code = {
         "healthy": 200,
@@ -459,7 +490,7 @@ async def health_check(request: Request):
     return JSONResponse(health_status, status_code=status_code)
 
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(verify_api_key)])
 async def get_metrics():
     """
     Prometheus metrics endpoint
