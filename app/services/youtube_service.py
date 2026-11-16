@@ -19,6 +19,23 @@ from app.models.responses import VideoMetadata
 logger = logging.getLogger(__name__)
 
 
+def build_cookie_opts() -> Dict[str, Any]:
+    """Return yt-dlp cookie options from the settings.
+
+    A cookies file is used when it exists. A browser profile is used only when
+    YOUTUBE_COOKIES_FROM_BROWSER is set. The default is no cookies, because a
+    server has no browser profile and yt-dlp raises an error without one.
+    """
+    if settings.YOUTUBE_COOKIES_FILE:
+        cookies_path = Path(settings.YOUTUBE_COOKIES_FILE)
+        if cookies_path.exists():
+            return {'cookiefile': str(cookies_path)}
+        logger.warning(f"Configured cookies file not found: {settings.YOUTUBE_COOKIES_FILE}")
+    if settings.YOUTUBE_COOKIES_FROM_BROWSER:
+        return {'cookiesfrombrowser': (settings.YOUTUBE_COOKIES_FROM_BROWSER, None)}
+    return {}
+
+
 class YouTubeService:
     """Service for downloading YouTube videos and extracting audio"""
     
@@ -67,52 +84,20 @@ class YouTubeService:
                     }],
                     'quiet': True,
                     'no_warnings': True,
+                    'noplaylist': True,  # Download one video even if the URL has a list= parameter
                     'socket_timeout': settings.YOUTUBE_DOWNLOAD_TIMEOUT,
                     'fragment_retries': 3,
                     'retries': 3,
                 }
 
-                # Add cookies file if configured
-                if hasattr(settings, 'YOUTUBE_COOKIES_FILE') and settings.YOUTUBE_COOKIES_FILE:
-                    cookies_path = Path(settings.YOUTUBE_COOKIES_FILE)
-                    if cookies_path.exists():
-                        ydl_opts['cookiefile'] = str(cookies_path)
-                    else:
-                        logger.warning(f"Configured cookies file not found: {settings.YOUTUBE_COOKIES_FILE}")
-                        # Try browser cookies as fallback
-                        try:
-                            ydl_opts['cookiesfrombrowser'] = ('firefox', None)
-                        except Exception:
-                            pass
-                else:
-                    # Try to use cookies from browser as fallback
-                    try:
-                        ydl_opts['cookiesfrombrowser'] = ('firefox', None)
-                    except Exception:
-                        pass
+                ydl_opts.update(build_cookie_opts())
                 
                 # Extract info first if metadata is requested
                 metadata = None
                 if extract_metadata:
                     try:
-                        metadata_opts = {'quiet': True}
-                        # Add cookies file if configured
-                        if hasattr(settings, 'YOUTUBE_COOKIES_FILE') and settings.YOUTUBE_COOKIES_FILE:
-                            cookies_path = Path(settings.YOUTUBE_COOKIES_FILE)
-                            if cookies_path.exists():
-                                metadata_opts['cookiefile'] = str(cookies_path)
-                            else:
-                                # Try browser cookies as fallback
-                                try:
-                                    metadata_opts['cookiesfrombrowser'] = ('firefox', None)
-                                except Exception:
-                                    pass
-                        else:
-                            # Try to use cookies from browser as fallback
-                            try:
-                                metadata_opts['cookiesfrombrowser'] = ('firefox', None)
-                            except Exception:
-                                pass
+                        metadata_opts = {'quiet': True, 'noplaylist': True}
+                        metadata_opts.update(build_cookie_opts())
 
                         with yt_dlp.YoutubeDL(metadata_opts) as ydl:
                             info = ydl.extract_info(url, download=False)

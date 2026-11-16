@@ -57,6 +57,9 @@ class Settings(BaseSettings):
     DEFAULT_AUDIO_FORMAT: str = "mp3"
     SUPPORTED_AUDIO_FORMATS: list = ["mp3", "m4a", "wav", "flac", "aac", "opus"]
     YOUTUBE_COOKIES_FILE: str = ""  # Optional: Path to cookies file for YouTube authentication
+    # Optional: browser name for yt-dlp cookie import (for example "firefox").
+    # Empty means no browser cookies. Use it only on a machine with that browser profile.
+    YOUTUBE_COOKIES_FROM_BROWSER: str = ""
     
     # Demucs Settings
     DEFAULT_DEMUCS_MODEL: str = "htdemucs"
