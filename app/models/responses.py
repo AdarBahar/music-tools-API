@@ -3,6 +3,7 @@ Pydantic models for API responses
 """
 
 from typing import Optional, Dict, Any, List
+from datetime import datetime
 from pydantic import BaseModel, Field
 
 
@@ -53,7 +54,7 @@ class DownloadInfo(BaseModel):
     filename: str
     file_size_mb: float
     content_type: str
-    created_at: str
+    created_at: datetime  # UTC, ISO 8601 in the JSON output
 
 
 class ErrorResponse(BaseModel):

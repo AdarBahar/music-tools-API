@@ -5,6 +5,7 @@ File download API routes
 import os
 import uuid
 import logging
+from datetime import datetime, timezone
 from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Response, Depends, Request
@@ -197,7 +198,7 @@ async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
             filename=_display_name(file_path.name, file_id),
             file_size_mb=round(file_stats.st_size / (1024 * 1024), 2),
             content_type=_get_content_type(file_path.suffix),
-            created_at=str(file_stats.st_ctime)
+            created_at=datetime.fromtimestamp(file_stats.st_ctime, tz=timezone.utc)
         )
 
     except HTTPException:
