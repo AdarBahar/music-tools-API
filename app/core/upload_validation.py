@@ -39,6 +39,30 @@ class FileUploadValidator:
         self.allowed_extensions = [ext.lower() for ext in settings.ALLOWED_AUDIO_EXTENSIONS]
         self.allowed_mime_types = [mime.lower() for mime in settings.ALLOWED_MIME_TYPES]
     
+    @staticmethod
+    def _detect_audio_type(header: bytes) -> Optional[str]:
+        """Return the audio type from the first bytes, or None if unknown.
+
+        Each rule checks a fixed position. A signature that appears
+        anywhere else in the header does not count.
+        """
+        if header[:4] == b'RIFF' and header[8:12] == b'WAVE':
+            return 'WAV'
+        if header[:4] == b'fLaC':
+            return 'FLAC'
+        if header[:4] == b'OggS':
+            return 'OGG/OPUS'
+        if header[:3] == b'ID3':
+            return 'MP3 (ID3)'
+        if header[4:8] == b'ftyp':
+            return 'M4A/MP4'
+        if header[:8] == b'\x30\x26\xB2\x75\x8E\x66\xCF\x11':
+            return 'WMA'
+        # MPEG audio frame sync (MP3 and ADTS AAC): 11 set bits at the start
+        if len(header) >= 2 and header[0] == 0xFF and (header[1] & 0xE0) == 0xE0:
+            return 'MP3/AAC'
+        return None
+
     async def validate_upload(self, file: UploadFile) -> Tuple[bool, Optional[str]]:
         """
         Comprehensive upload validation
@@ -113,27 +137,9 @@ class FileUploadValidator:
             if not header or len(header) < 4:
                 raise UploadValidationError("File appears to be empty or corrupted")
             
-            # Check for known audio file signatures
-            is_valid_audio = False
-            detected_type = "Unknown"
-            
-            for signature, file_type in self.AUDIO_SIGNATURES.items():
-                if header.startswith(signature) or signature in header[:16]:
-                    is_valid_audio = True
-                    detected_type = file_type
-                    break
-            
-            # Additional checks for specific formats
-            if not is_valid_audio:
-                # Check for MP4/M4A containers with different signatures
-                if b'ftyp' in header[:12]:
-                    is_valid_audio = True
-                    detected_type = "M4A/MP4"
-                # Check for ID3 tagged MP3 files
-                elif header.startswith(b'ID3'):
-                    is_valid_audio = True
-                    detected_type = "MP3 (ID3)"
-            
+            detected_type = self._detect_audio_type(header)
+            is_valid_audio = detected_type is not None
+
             if not is_valid_audio:
                 # Log the header for debugging
                 header_hex = header[:16].hex() if header else "empty"

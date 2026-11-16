@@ -22,6 +22,10 @@ from .config import settings
 logger = logging.getLogger(__name__)
 
 
+class OperationLimitError(RuntimeError):
+    """Raised when the server cannot start a new heavy operation now."""
+
+
 @dataclass
 class MemoryStats:
     """Memory usage statistics"""
@@ -218,11 +222,11 @@ class ConcurrentOperationLimiter:
         async with self.operation_lock:
             # Check concurrent operation limit
             if self.active_operations >= settings.MAX_CONCURRENT_OPERATIONS:
-                raise RuntimeError(f"Maximum concurrent operations reached: {self.active_operations}/{settings.MAX_CONCURRENT_OPERATIONS}")
+                raise OperationLimitError(f"Maximum concurrent operations reached: {self.active_operations}/{settings.MAX_CONCURRENT_OPERATIONS}")
             
             # Check memory availability
             if not self.memory_monitor.check_memory_available(estimated_memory_mb):
-                raise RuntimeError(f"Insufficient memory for operation {operation_name}: requires {estimated_memory_mb}MB")
+                raise OperationLimitError(f"Insufficient memory for operation {operation_name}: requires {estimated_memory_mb}MB")
             
             self.active_operations += 1
             logger.info(f"Started operation {operation_name} ({self.active_operations}/{settings.MAX_CONCURRENT_OPERATIONS} active)")

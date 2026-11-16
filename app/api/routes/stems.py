@@ -6,17 +6,17 @@ import os
 import logging
 import tempfile
 from typing import Optional, List
-from fastapi import APIRouter, UploadFile, File, Form, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, UploadFile, File, Form, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
 
 from app.core.config import settings
 from app.core.rate_limit import limit
 from app.models.responses import StemSeparationResponse, StemFiles
-from app.services.stem_service import StemSeparationService, SecurityError
+from app.services.stem_service import StemSeparationService, SecurityError, InsufficientStorageError
 from app.core.auth import verify_api_key
 from app.core.cleanup import temp_file_manager, cleanup_file, register_cleanup_on_exit
 from app.core.memory_management import (
-    memory_monitor, streaming_handler, operation_limiter
+    memory_monitor, streaming_handler, operation_limiter, OperationLimitError
 )
 from app.core.metrics import MetricsContext
 from app.core.upload_validation import upload_validator
@@ -24,25 +24,6 @@ from app.core.upload_validation import upload_validator
 # Use Uvicorn's configured logger so logs reliably appear in journalctl/systemd.
 logger = logging.getLogger("uvicorn.error")
 router = APIRouter()
-
-
-async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
-    """
-    Background task to schedule cleanup of stem files after delay period
-    
-    Args:
-        stem_file_paths: List of stem file paths to cleanup
-        delay_hours: Hours to wait before cleanup
-    """
-    import asyncio
-    from app.core.cleanup import cleanup_files
-    
-    # Wait for the specified delay
-    await asyncio.sleep(delay_hours * 3600)
-    
-    # Clean up the files
-    cleaned_count = cleanup_files(stem_file_paths)
-    logger.info(f"Background cleanup removed {cleaned_count}/{len(stem_file_paths)} stem files")
 
 
 @router.post(
@@ -55,7 +36,6 @@ async def _schedule_stem_cleanup(stem_file_paths: List[str], delay_hours: int):
 @limit(settings.RATE_LIMIT_HEAVY_OPERATIONS)
 async def separate_stems(
     request: Request,
-    background_tasks: BackgroundTasks,
     file: UploadFile = File(..., description="Audio file to separate"),
     model: str = Form(default=settings.DEFAULT_DEMUCS_MODEL, description="Demucs model to use"),
     output_format: str = Form(default=settings.DEFAULT_STEM_FORMAT, description="Output format for stems"),
@@ -79,16 +59,7 @@ async def separate_stems(
         stats = memory_monitor.get_memory_stats()
         logger.info(f"Memory status - Available: {stats.available_memory_mb:.1f}MB, Process: {stats.process_memory_mb:.1f}MB")
         
-        # Comprehensive file type and content validation
-        is_valid, error_message = await upload_validator.validate_upload(file)
-        if not is_valid:
-            logger.warning(f"File validation failed: {error_message}")
-            raise HTTPException(
-                status_code=400,
-                detail=f"Invalid file: {error_message}"
-            )
-        
-        # Get file size after validation
+        # Validate the file type, content and size. Raises HTTPException on failure.
         file_size = await upload_validator.validate_and_get_size(file)
         logger.info(f"File validation passed: {file.filename} ({file_size / (1024*1024):.2f}MB)")
         
@@ -147,9 +118,13 @@ async def separate_stems(
                     )
                 
                 if not result['success']:
-                    return StemSeparationResponse(
-                        success=False,
-                        error=result.get('error', 'Unknown error occurred')
+                    # Keep the same body shape as a success, with an error status code.
+                    return JSONResponse(
+                        status_code=result.get('status_code', 500),
+                        content=StemSeparationResponse(
+                            success=False,
+                            error=result.get('error', 'Unknown error occurred')
+                        ).model_dump()
                     )
                 
                 # Generate download URLs for stems
@@ -158,12 +133,7 @@ async def separate_stems(
                     download_url = f"/api/v1/download/{result['job_id']}/{os.path.basename(file_path)}"
                     setattr(stem_files, stem_name, download_url)
                 
-                # Schedule cleanup of generated stem files for later (after download period)
-                background_tasks.add_task(
-                    _schedule_stem_cleanup, 
-                    list(result['stem_files'].values()),
-                    settings.FILE_RETENTION_HOURS
-                )
+                # The periodic cleanup job removes the files after FILE_RETENTION_HOURS.
                 
                 return StemSeparationResponse(
                     success=True,
@@ -179,6 +149,18 @@ async def separate_stems(
                 raise HTTPException(
                     status_code=400,
                     detail="Invalid request parameters"
+                )
+            except InsufficientStorageError:
+                raise HTTPException(
+                    status_code=507,
+                    detail="The server has too little free disk space for this job"
+                )
+            except OperationLimitError as e:
+                logger.warning(f"Server busy: {e}")
+                raise HTTPException(
+                    status_code=503,
+                    detail="The server is busy. Try again later.",
+                    headers={"Retry-After": "30"}
                 )
             except HTTPException:
                 raise
