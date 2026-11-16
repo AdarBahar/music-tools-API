@@ -4,6 +4,7 @@ Configuration settings for the Music Tools API Service
 
 import os
 from pathlib import Path
+from pydantic import model_validator
 from pydantic_settings import BaseSettings
 
 
@@ -23,7 +24,11 @@ class Settings(BaseSettings):
     
     # File Limits
     MAX_FILE_SIZE_MB: int = 100
-    MAX_FILE_SIZE_BYTES: int = MAX_FILE_SIZE_MB * 1024 * 1024
+
+    @property
+    def MAX_FILE_SIZE_BYTES(self) -> int:
+        """Upload size limit in bytes. Always follows MAX_FILE_SIZE_MB."""
+        return self.MAX_FILE_SIZE_MB * 1024 * 1024
     
     # Memory Management
     MEMORY_LIMIT_MB: int = 2048  # 2GB memory limit for processing
@@ -95,8 +100,9 @@ class Settings(BaseSettings):
     
     # Background Tasks
     REDIS_URL: str = "redis://localhost:6379/0"
-    CELERY_BROKER_URL: str = REDIS_URL
-    CELERY_RESULT_BACKEND: str = REDIS_URL
+    # These three follow REDIS_URL unless they are set in the environment.
+    CELERY_BROKER_URL: str = ""
+    CELERY_RESULT_BACKEND: str = ""
     
     # Security
     API_KEY_HEADER: str = "X-API-Key"
@@ -106,11 +112,22 @@ class Settings(BaseSettings):
     
     # Rate Limiting
     ENABLE_RATE_LIMITING: bool = True
-    RATE_LIMIT_STORAGE_URI: str = REDIS_URL
+    RATE_LIMIT_STORAGE_URI: str = ""
     # Rate limits per minute for different operation types
     RATE_LIMIT_HEAVY_OPERATIONS: str = "3/minute"  # Stem separation, YouTube downloads
     RATE_LIMIT_LIGHT_OPERATIONS: str = "20/minute"  # Downloads, models list
     RATE_LIMIT_INFO_OPERATIONS: str = "60/minute"  # Health checks, info endpoints
+
+    @model_validator(mode="after")
+    def _derive_redis_urls(self):
+        """Default the Redis based URLs to REDIS_URL after the environment loads."""
+        if not self.CELERY_BROKER_URL:
+            self.CELERY_BROKER_URL = self.REDIS_URL
+        if not self.CELERY_RESULT_BACKEND:
+            self.CELERY_RESULT_BACKEND = self.REDIS_URL
+        if not self.RATE_LIMIT_STORAGE_URI:
+            self.RATE_LIMIT_STORAGE_URI = self.REDIS_URL
+        return self
 
     @property
     def valid_api_keys_list(self) -> list:

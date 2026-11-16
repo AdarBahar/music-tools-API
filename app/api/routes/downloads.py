@@ -20,6 +20,16 @@ logger = logging.getLogger(__name__)
 router = APIRouter()
 
 
+def _display_name(stored_name: str, file_id: str) -> str:
+    """Remove the "<file_id> - " storage prefix from the name the user sees."""
+    if not stored_name.startswith(file_id):
+        return stored_name
+    name = stored_name[len(file_id):].lstrip(" -")
+    if not name or name.startswith("."):
+        name = f"audio{name}"
+    return name
+
+
 def _validate_uuid(value: str, param_name: str = "identifier") -> None:
     """
     Validate that a string is a valid UUID format
@@ -118,12 +128,7 @@ async def download_file(request: Request, file_id: str):
         # Determine content type based on file extension
         content_type = _get_content_type(file_path.suffix)
 
-        # Remove the "<file_id> - " storage prefix from the name the user sees.
-        display_name = file_path.name
-        if display_name.startswith(file_id):
-            display_name = display_name[len(file_id):].lstrip(" -")
-            if not display_name or display_name.startswith("."):
-                display_name = f"audio{display_name}"
+        display_name = _display_name(file_path.name, file_id)
 
         return FileResponse(
             path=str(file_path),
@@ -135,6 +140,63 @@ async def download_file(request: Request, file_id: str):
         raise
     except Exception as e:
         logger.error(f"Error downloading file: {type(e).__name__}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
+
+
+# This route must stay before /download/{job_id}/{filename}. The router matches in order.
+@router.get(
+    "/download/{file_id}/info",
+    response_model=DownloadInfo,
+    summary="Get file information",
+    description="Get information about a downloadable file. Requires authentication when enabled.",
+    dependencies=[Depends(verify_api_key)]
+)
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
+async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
+    """
+    Get information about a file
+
+    - **file_id**: Unique identifier for the file (UUID format)
+
+    Returns file metadata and information.
+    """
+    try:
+        # Validate file_id is a valid UUID format
+        _validate_uuid(file_id, "file_id")
+
+        output_dir = settings.OUTPUT_DIR
+        matching_files = []
+
+        for file_path in output_dir.rglob("*"):
+            if file_path.is_file() and file_path.name.startswith(file_id):
+                # Verify the path is within output_dir (prevent traversal)
+                _ensure_path_within_directory(file_path, output_dir)
+                matching_files.append(file_path)
+
+        if not matching_files:
+            raise HTTPException(
+                status_code=404,
+                detail="File not found"
+            )
+
+        file_path = matching_files[0]
+        file_stats = file_path.stat()
+
+        return DownloadInfo(
+            file_id=file_id,
+            filename=_display_name(file_path.name, file_id),
+            file_size_mb=round(file_stats.st_size / (1024 * 1024), 2),
+            content_type=_get_content_type(file_path.suffix),
+            created_at=str(file_stats.st_ctime)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting file info: {type(e).__name__}")
         raise HTTPException(
             status_code=500,
             detail="Internal server error"
@@ -189,62 +251,6 @@ async def download_stem_file(request: Request, job_id: str, filename: str):
         raise
     except Exception as e:
         logger.error(f"Error downloading stem file: {type(e).__name__}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error"
-        )
-
-
-@router.get(
-    "/download/{file_id}/info",
-    response_model=DownloadInfo,
-    summary="Get file information",
-    description="Get information about a downloadable file. Requires authentication when enabled.",
-    dependencies=[Depends(verify_api_key)]
-)
-@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
-async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
-    """
-    Get information about a file
-
-    - **file_id**: Unique identifier for the file (UUID format)
-
-    Returns file metadata and information.
-    """
-    try:
-        # Validate file_id is a valid UUID format
-        _validate_uuid(file_id, "file_id")
-
-        output_dir = settings.OUTPUT_DIR
-        matching_files = []
-
-        for file_path in output_dir.rglob("*"):
-            if file_path.is_file() and file_path.name.startswith(file_id):
-                # Verify the path is within output_dir (prevent traversal)
-                _ensure_path_within_directory(file_path, output_dir)
-                matching_files.append(file_path)
-
-        if not matching_files:
-            raise HTTPException(
-                status_code=404,
-                detail="File not found"
-            )
-
-        file_path = matching_files[0]
-        file_stats = file_path.stat()
-
-        return DownloadInfo(
-            file_id=file_id,
-            filename=file_path.name,
-            file_size_mb=round(file_stats.st_size / (1024 * 1024), 2),
-            content_type=_get_content_type(file_path.suffix),
-            created_at=str(file_stats.st_ctime)
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting file info: {type(e).__name__}")
         raise HTTPException(
             status_code=500,
             detail="Internal server error"

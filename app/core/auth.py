@@ -4,6 +4,7 @@ Authentication and authorization utilities
 
 import logging
 import hashlib
+import hmac
 from typing import Optional
 from fastapi import HTTPException, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -43,7 +44,12 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
         raise AuthenticationError("API key required. Provide X-API-Key header.")
     
     # Validate API key against configured keys
-    if x_api_key not in settings.valid_api_keys_list:
+    # Compare every key in constant time. This avoids a timing side channel.
+    key_valid = False
+    for valid_key in settings.valid_api_keys_list:
+        if hmac.compare_digest(x_api_key.encode(), valid_key.encode()):
+            key_valid = True
+    if not key_valid:
         logger.warning("Invalid API key attempted")
         raise AuthenticationError("Invalid API key")
 
