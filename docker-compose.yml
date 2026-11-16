@@ -21,6 +21,8 @@ services:
       - DEFAULT_DEMUCS_MODEL=htdemucs
       - DEFAULT_STEM_FORMAT=mp3
       - REDIS_URL=redis://redis:6379/0
+      # Nginx runs in another container. Trust the Docker private networks for X-Forwarded-For.
+      - TRUSTED_PROXIES=127.0.0.1,::1,172.16.0.0/12
     depends_on:
       - redis
     restart: unless-stopped

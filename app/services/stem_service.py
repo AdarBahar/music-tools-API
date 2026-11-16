@@ -15,6 +15,7 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from app.core.config import settings
+from app.core.filenames import truncate_utf8
 from app.core.memory_management import (
     memory_monitor, operation_limiter, process_manager, efficient_processor, OperationLimitError
 )
@@ -32,7 +33,7 @@ class InsufficientStorageError(Exception):
     pass
 
 
-def _safe_base_name(original_filename: Optional[str], max_length: int = 150) -> str:
+def _safe_base_name(original_filename: Optional[str], max_bytes: int = 200) -> str:
     """Return a safe base name (no directory, no extension) for output files.
 
     Keeps letters and digits of any language, spaces, and - _ ( ) , characters.
@@ -44,7 +45,9 @@ def _safe_base_name(original_filename: Optional[str], max_length: int = 150) -> 
     name = Path(original_filename.replace("\\", "/")).name
     base = Path(name).stem if Path(name).suffix else name
     cleaned = "".join(c if (c.isalnum() or c in " -_(),") else "_" for c in base)
-    return cleaned.strip(" _")[:max_length]
+    # Limit by UTF-8 bytes. A file name can use 255 bytes at most, and the
+    # service adds " - <stem>.<format>" (up to 14 bytes).
+    return truncate_utf8(cleaned, max_bytes).strip(" _")
 
 
 class StemSeparationService:

@@ -14,6 +14,7 @@ import yt_dlp
 from yt_dlp.utils import DownloadError
 
 from app.core.config import settings
+from app.core.filenames import truncate_utf8
 from app.models.responses import VideoMetadata
 
 logger = logging.getLogger(__name__)
@@ -182,8 +183,11 @@ class YouTubeService:
         if metadata and metadata.title:
             # Clean the title for use as filename
             safe_title = "".join(c for c in metadata.title if c.isalnum() or c in (' ', '-', '_', '.', '(', ')')).strip()
-            safe_title = safe_title[:200]  # Increased length limit for full titles
-            filename = f"{file_id} - {safe_title}.{audio_format}" if safe_title else f"{file_id}.{audio_format}"
+            # One file name can use 255 bytes at most. Keep room for the ID prefix and the extension.
+            prefix = f"{file_id} - "
+            budget = 255 - len(prefix.encode("utf-8")) - len(f".{audio_format}".encode("utf-8"))
+            safe_title = truncate_utf8(safe_title, min(budget, 200)).strip()
+            filename = f"{prefix}{safe_title}.{audio_format}" if safe_title else f"{file_id}.{audio_format}"
         else:
             filename = f"{file_id}.{audio_format}"
 

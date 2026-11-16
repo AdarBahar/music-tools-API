@@ -105,3 +105,13 @@ def test_upload_signature_check(client, auth, data, name, status):
     r = client.post("/api/v1/separate-stems", headers=auth,
                     files={"file": (name, data, "audio/mpeg")}, data={"output_format": "wav"})
     assert r.status_code == status
+
+
+def test_long_hebrew_or_cjk_names_fit_the_255_byte_limit(client, auth, out_dir):
+    long_name = "歌" * 120 + ".wav"
+    r = _post(client, auth, long_name, stems="vocals")
+    assert r.status_code == 200, r.text
+    names = [p.name for p in out_dir.rglob("*") if p.is_file() and p.name.endswith("歌 - vocals.wav")]
+    assert names
+    assert all(len(n.encode("utf-8")) <= 255 for n in names)
+    assert len(_safe_base_name("ש" * 300).encode("utf-8")) <= 200

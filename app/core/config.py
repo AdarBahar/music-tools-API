@@ -110,6 +110,11 @@ class Settings(BaseSettings):
     VALID_API_KEYS: str = ""
     ALLOWED_ORIGINS: str = "http://localhost:3000,http://localhost:8080"
     
+    # Proxies that may set X-Forwarded-For. Comma-separated IP addresses or networks.
+    # Only a request from one of these addresses can choose the client address.
+    # Behind Docker Compose, add the Docker network (for example 172.16.0.0/12).
+    TRUSTED_PROXIES: str = "127.0.0.1,::1"
+
     # Rate Limiting
     ENABLE_RATE_LIMITING: bool = True
     RATE_LIMIT_STORAGE_URI: str = ""

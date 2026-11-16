@@ -56,3 +56,13 @@ def test_cookie_options(monkeypatch):
     assert youtube_service.build_cookie_opts() == {}
     monkeypatch.setattr(settings, "YOUTUBE_COOKIES_FROM_BROWSER", "firefox")
     assert youtube_service.build_cookie_opts() == {"cookiesfrombrowser": ("firefox", None)}
+
+
+def test_long_cjk_title_fits_the_255_byte_file_name_limit():
+    import uuid
+    from app.models.responses import VideoMetadata
+    name = youtube_service.YouTubeService()._generate_filename(
+        VideoMetadata(title="歌" * 80), str(uuid.uuid4()), "mp3")
+    assert len(name.encode("utf-8")) <= 255
+    assert name.endswith(".mp3")
+    name.encode("utf-8").decode("utf-8")  # no cut character
