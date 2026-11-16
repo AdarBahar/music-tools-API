@@ -30,6 +30,24 @@ def _display_name(stored_name: str, file_id: str) -> str:
     return name
 
 
+def _find_stored_files(file_id: str, output_dir: Path) -> list:
+    """Find stored files for a file ID in the output directory.
+
+    YouTube files are stored directly in the output directory, and the name
+    starts with the file ID. A direct pattern lookup replaces a scan of the
+    full directory tree. The ID is converted to the canonical UUID form first,
+    so no glob character can enter the pattern.
+    """
+    canonical_id = str(uuid.UUID(file_id))
+    found = []
+    for file_path in output_dir.glob(f"{canonical_id}*"):
+        if file_path.is_file():
+            # Verify the path is within output_dir (prevent traversal)
+            _ensure_path_within_directory(file_path, output_dir)
+            found.append(file_path)
+    return found
+
+
 def _validate_uuid(value: str, param_name: str = "identifier") -> None:
     """
     Validate that a string is a valid UUID format
@@ -109,12 +127,7 @@ async def download_file(request: Request, file_id: str):
         output_dir = settings.OUTPUT_DIR
 
         # Look for files that start with the file_id (not just contain it)
-        matching_files = []
-        for file_path in output_dir.rglob("*"):
-            if file_path.is_file() and file_path.name.startswith(file_id):
-                # Verify the path is within output_dir (prevent traversal)
-                _ensure_path_within_directory(file_path, output_dir)
-                matching_files.append(file_path)
+        matching_files = _find_stored_files(file_id, output_dir)
 
         if not matching_files:
             raise HTTPException(
@@ -168,13 +181,7 @@ async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
         _validate_uuid(file_id, "file_id")
 
         output_dir = settings.OUTPUT_DIR
-        matching_files = []
-
-        for file_path in output_dir.rglob("*"):
-            if file_path.is_file() and file_path.name.startswith(file_id):
-                # Verify the path is within output_dir (prevent traversal)
-                _ensure_path_within_directory(file_path, output_dir)
-                matching_files.append(file_path)
+        matching_files = _find_stored_files(file_id, output_dir)
 
         if not matching_files:
             raise HTTPException(

@@ -145,57 +145,23 @@ def _metrics_endpoint(request: Request) -> str:
     return path if path else "unmatched"
 
 
-# Add metrics middleware
+# One middleware does metrics, security event logging and bad request logging.
+# Each @app.middleware("http") layer adds overhead to every request, so these
+# three jobs share one layer.
 @app.middleware("http")
-async def metrics_middleware(request: Request, call_next):
-    """Middleware for collecting metrics"""
+async def observability_middleware(request: Request, call_next):
+    """Collect request metrics and log security events and bad requests"""
     import time
-    
+
     start_time = time.time()
-    
-    # Update memory metrics periodically
+
+    # Refresh memory metrics. The function limits how often it does real work.
     update_memory_metrics()
-    
+
     try:
         response = await call_next(request)
-        
-        # Record request metrics
-        duration = time.time() - start_time
-        endpoint = _metrics_endpoint(request)
-        method = request.method
-        status_code = response.status_code
-        
-        record_request(method, endpoint, status_code, duration)
-        
-        return response
-        
     except Exception as e:
-        # Record error metrics
-        duration = time.time() - start_time
-        endpoint = _metrics_endpoint(request)
-        method = request.method
-        
-        record_request(method, endpoint, 500, duration)
-        raise
-
-
-# Add security event logging middleware
-@app.middleware("http")
-async def security_middleware(request: Request, call_next):
-    """Middleware for security event logging"""
-    try:
-        response = await call_next(request)
-        
-        # Log authentication events
-        if response.status_code == 401:
-            await log_security_event(
-                request, 
-                "authentication_failure", 
-                {"endpoint": str(request.url), "method": request.method}
-            )
-        
-        return response
-    except Exception as e:
+        record_request(request.method, _metrics_endpoint(request), 500, time.time() - start_time)
         # Log security-related exceptions
         await log_security_event(
             request,
@@ -204,28 +170,28 @@ async def security_middleware(request: Request, call_next):
         )
         raise
 
+    record_request(
+        request.method, _metrics_endpoint(request), response.status_code, time.time() - start_time
+    )
 
-@app.middleware("http")
-async def log_bad_requests_middleware(request: Request, call_next):
-    """Log extra context for 400/422 responses (especially multipart uploads).
+    # Log authentication events
+    if response.status_code == 401:
+        await log_security_event(
+            request,
+            "authentication_failure",
+            {"endpoint": str(request.url), "method": request.method}
+        )
 
-    This is intentionally narrow to avoid noisy logs: we only emit for
-    `/api/v1/separate-stems` and only on 400/422.
-    """
-    response = await call_next(request)
-
+    # Extra context for 400/422 on stem uploads. Narrow on purpose, to avoid noisy logs.
     path = request.url.path
     if path == "/api/v1/separate-stems" and response.status_code in (400, 422):
-        uvicorn_logger = logging.getLogger("uvicorn.error")
         headers = request.headers
-        http_version = request.scope.get("http_version")
-
-        uvicorn_logger.warning(
+        logging.getLogger("uvicorn.error").warning(
             "Bad request to %s %s (status=%s, http=%s, ct=%s, cl=%s, te=%s, origin=%s, ua=%s, xff=%s)",
             request.method,
             path,
             response.status_code,
-            http_version,
+            request.scope.get("http_version"),
             headers.get("content-type"),
             headers.get("content-length"),
             headers.get("transfer-encoding"),
@@ -515,7 +481,7 @@ async def get_metrics():
             )
         
         # Update memory metrics before generating output
-        update_memory_metrics()
+        update_memory_metrics(force=True)
         
         # Generate Prometheus metrics
         metrics_data = generate_latest()

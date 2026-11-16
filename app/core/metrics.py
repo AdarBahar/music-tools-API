@@ -127,20 +127,36 @@ def set_active_operations(operation_type: str, count: int):
             logger.debug(f"Failed to set active operations: {e}")
 
 
-def update_memory_metrics():
-    """Update memory metrics from system"""
+_PROCESS = None
+_LAST_MEMORY_UPDATE = 0.0
+_MEMORY_UPDATE_INTERVAL = 5.0  # seconds
+
+
+def update_memory_metrics(force: bool = False):
+    """Update memory metrics from the system.
+
+    The function reuses one psutil.Process object and does real work at most
+    one time in 5 seconds, unless force is true. It runs on every request.
+    """
+    global _PROCESS, _LAST_MEMORY_UPDATE
+    now = time.monotonic()
+    if not force and now - _LAST_MEMORY_UPDATE < _MEMORY_UPDATE_INTERVAL:
+        return
+    _LAST_MEMORY_UPDATE = now
+
     try:
         import psutil
-        
+
+        if _PROCESS is None:
+            _PROCESS = psutil.Process()
+
         # System memory
         memory = psutil.virtual_memory()
         record_memory_usage(system_bytes=memory.used)
-        
+
         # Process memory
-        process = psutil.Process()
-        process_memory = process.memory_info().rss
-        record_memory_usage(process_bytes=process_memory)
-        
+        record_memory_usage(process_bytes=_PROCESS.memory_info().rss)
+
     except ImportError:
         pass  # psutil not available
     except Exception as e:
