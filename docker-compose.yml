@@ -1,5 +1,5 @@
 services:
-  music-tools-API:
+  music-tools-api:
     build: .
     container_name: music-tools-API
     ports:
@@ -21,6 +21,9 @@ services:
       - DEFAULT_DEMUCS_MODEL=htdemucs
       - DEFAULT_STEM_FORMAT=mp3
       - REDIS_URL=redis://redis:6379/0
+      # Nginx runs in another container. Trust only the Nginx address (fixed below).
+      # A wider range would let any client on the Docker network choose its own rate limit key.
+      - TRUSTED_PROXIES=127.0.0.1,::1,172.28.0.10
     depends_on:
       - redis
     restart: unless-stopped
@@ -76,6 +79,9 @@ services:
     depends_on:
       - music-tools-api
     restart: unless-stopped
+    networks:
+      default:
+        ipv4_address: 172.28.0.10  # Must match TRUSTED_PROXIES of the API service
     profiles:
       - production
 
@@ -85,3 +91,6 @@ volumes:
 networks:
   default:
     name: music-tools-network
+    ipam:
+      config:
+        - subnet: 172.28.0.0/24  # Change it if the host already uses this range

@@ -5,6 +5,8 @@ env/
 ENV/
 bin/
 lib/
+include/
+share/
 pyvenv.cfg
 
 # Environment variables

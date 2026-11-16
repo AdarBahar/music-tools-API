@@ -14,9 +14,27 @@ import yt_dlp
 from yt_dlp.utils import DownloadError
 
 from app.core.config import settings
+from app.core.filenames import truncate_utf8
 from app.models.responses import VideoMetadata
 
 logger = logging.getLogger(__name__)
+
+
+def build_cookie_opts() -> Dict[str, Any]:
+    """Return yt-dlp cookie options from the settings.
+
+    A cookies file is used when it exists. A browser profile is used only when
+    YOUTUBE_COOKIES_FROM_BROWSER is set. The default is no cookies, because a
+    server has no browser profile and yt-dlp raises an error without one.
+    """
+    if settings.YOUTUBE_COOKIES_FILE:
+        cookies_path = Path(settings.YOUTUBE_COOKIES_FILE)
+        if cookies_path.exists():
+            return {'cookiefile': str(cookies_path)}
+        logger.warning(f"Configured cookies file not found: {settings.YOUTUBE_COOKIES_FILE}")
+    if settings.YOUTUBE_COOKIES_FROM_BROWSER:
+        return {'cookiesfrombrowser': (settings.YOUTUBE_COOKIES_FROM_BROWSER, None)}
+    return {}
 
 
 class YouTubeService:
@@ -67,52 +85,20 @@ class YouTubeService:
                     }],
                     'quiet': True,
                     'no_warnings': True,
+                    'noplaylist': True,  # Download one video even if the URL has a list= parameter
                     'socket_timeout': settings.YOUTUBE_DOWNLOAD_TIMEOUT,
                     'fragment_retries': 3,
                     'retries': 3,
                 }
 
-                # Add cookies file if configured
-                if hasattr(settings, 'YOUTUBE_COOKIES_FILE') and settings.YOUTUBE_COOKIES_FILE:
-                    cookies_path = Path(settings.YOUTUBE_COOKIES_FILE)
-                    if cookies_path.exists():
-                        ydl_opts['cookiefile'] = str(cookies_path)
-                    else:
-                        logger.warning(f"Configured cookies file not found: {settings.YOUTUBE_COOKIES_FILE}")
-                        # Try browser cookies as fallback
-                        try:
-                            ydl_opts['cookiesfrombrowser'] = ('firefox', None)
-                        except Exception:
-                            pass
-                else:
-                    # Try to use cookies from browser as fallback
-                    try:
-                        ydl_opts['cookiesfrombrowser'] = ('firefox', None)
-                    except Exception:
-                        pass
+                ydl_opts.update(build_cookie_opts())
                 
                 # Extract info first if metadata is requested
                 metadata = None
                 if extract_metadata:
                     try:
-                        metadata_opts = {'quiet': True}
-                        # Add cookies file if configured
-                        if hasattr(settings, 'YOUTUBE_COOKIES_FILE') and settings.YOUTUBE_COOKIES_FILE:
-                            cookies_path = Path(settings.YOUTUBE_COOKIES_FILE)
-                            if cookies_path.exists():
-                                metadata_opts['cookiefile'] = str(cookies_path)
-                            else:
-                                # Try browser cookies as fallback
-                                try:
-                                    metadata_opts['cookiesfrombrowser'] = ('firefox', None)
-                                except Exception:
-                                    pass
-                        else:
-                            # Try to use cookies from browser as fallback
-                            try:
-                                metadata_opts['cookiesfrombrowser'] = ('firefox', None)
-                            except Exception:
-                                pass
+                        metadata_opts = {'quiet': True, 'noplaylist': True}
+                        metadata_opts.update(build_cookie_opts())
 
                         with yt_dlp.YoutubeDL(metadata_opts) as ydl:
                             info = ydl.extract_info(url, download=False)
@@ -130,8 +116,12 @@ class YouTubeService:
                     raise FileNotFoundError("Downloaded file not found")
                 
                 # Move to output directory with proper filename
+                # The stored name starts with file_id so the download route can find it.
                 final_filename = self._generate_filename(metadata, file_id, audio_format)
                 final_path = self.output_dir / final_filename
+                display_filename = final_filename[len(file_id):].lstrip(" -")
+                if not display_filename or display_filename.startswith("."):
+                    display_filename = f"audio{display_filename}"
                 
                 # Ensure output directory exists
                 self.output_dir.mkdir(parents=True, exist_ok=True)
@@ -145,7 +135,7 @@ class YouTubeService:
                 return {
                     'success': True,
                     'file_id': file_id,
-                    'filename': final_filename,
+                    'filename': display_filename,
                     'file_path': final_path,
                     'file_size_mb': round(file_size_mb, 2),
                     'metadata': metadata
@@ -193,9 +183,12 @@ class YouTubeService:
         if metadata and metadata.title:
             # Clean the title for use as filename
             safe_title = "".join(c for c in metadata.title if c.isalnum() or c in (' ', '-', '_', '.', '(', ')')).strip()
-            safe_title = safe_title[:200]  # Increased length limit for full titles
-            filename = f"{safe_title}.{audio_format}"
+            # One file name can use 255 bytes at most. Keep room for the ID prefix and the extension.
+            prefix = f"{file_id} - "
+            budget = 255 - len(prefix.encode("utf-8")) - len(f".{audio_format}".encode("utf-8"))
+            safe_title = truncate_utf8(safe_title, min(budget, 200)).strip()
+            filename = f"{prefix}{safe_title}.{audio_format}" if safe_title else f"{file_id}.{audio_format}"
         else:
-            filename = f"audio_{file_id}.{audio_format}"
+            filename = f"{file_id}.{audio_format}"
 
         return filename

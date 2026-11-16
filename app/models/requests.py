@@ -41,12 +41,12 @@ class YouTubeToMP3Request(BaseModel):
     
     @validator('url')
     def validate_youtube_url(cls, v):
-        url_str = str(v)
-        youtube_domains = [
+        from urllib.parse import urlparse
+        youtube_domains = {
             'youtube.com', 'www.youtube.com', 'm.youtube.com',
-            'youtu.be', 'music.youtube.com'
-        ]
-        if not any(domain in url_str for domain in youtube_domains):
+            'youtu.be', 'www.youtu.be', 'music.youtube.com'
+        }
+        if urlparse(str(v)).hostname not in youtube_domains:
             raise ValueError("URL must be a valid YouTube URL")
         return v
 

@@ -20,18 +20,17 @@ Version: 1.0.0
 import os
 import logging
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException, Request
+from fastapi import FastAPI, HTTPException, Request, Depends
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.staticfiles import StaticFiles
 from dotenv import load_dotenv
-from slowapi import Limiter, _rate_limit_exceeded_handler
-from slowapi.util import get_remote_address
+from slowapi import _rate_limit_exceeded_handler
 from slowapi.errors import RateLimitExceeded
 
 from app.api.routes import youtube, stems, downloads
 from app.core.config import settings
+from app.core.rate_limit import limiter, limit
 from app.core.cleanup import start_cleanup_scheduler
-from app.core.auth import log_security_event
+from app.core.auth import log_security_event, verify_api_key, has_detail_access
 from app.core.metrics import init_metrics, record_request, update_memory_metrics
 
 # Load environment variables
@@ -52,23 +51,6 @@ security_handler.setFormatter(
 )
 security_logger.addHandler(security_handler)
 security_logger.setLevel(logging.INFO)
-
-# Initialize rate limiter if enabled
-limiter = None
-if settings.ENABLE_RATE_LIMITING:
-    try:
-        limiter = Limiter(
-            key_func=get_remote_address,
-            storage_uri=settings.RATE_LIMIT_STORAGE_URI,
-            default_limits=["100/minute"]
-        )
-        logger.info("Rate limiting enabled with Redis storage")
-    except Exception as e:
-        logger.warning(f"Failed to initialize rate limiter: {type(e).__name__}. Rate limiting disabled.")
-        limiter = None
-else:
-    logger.info("Rate limiting disabled in configuration")
-
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -152,57 +134,34 @@ if limiter:
     app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
     logger.info("Rate limiting middleware configured")
 
-# Add metrics middleware
+def _metrics_endpoint(request: Request) -> str:
+    """Return the route template (for example /api/v1/download/{file_id}).
+
+    The raw path has an ID in it. A label with an ID creates a new series
+    for each request, so memory use grows without limit.
+    """
+    route = request.scope.get("route")
+    path = getattr(route, "path", None)
+    return path if path else "unmatched"
+
+
+# One middleware does metrics, security event logging and bad request logging.
+# Each @app.middleware("http") layer adds overhead to every request, so these
+# three jobs share one layer.
 @app.middleware("http")
-async def metrics_middleware(request: Request, call_next):
-    """Middleware for collecting metrics"""
+async def observability_middleware(request: Request, call_next):
+    """Collect request metrics and log security events and bad requests"""
     import time
-    
+
     start_time = time.time()
-    
-    # Update memory metrics periodically
+
+    # Refresh memory metrics. The function limits how often it does real work.
     update_memory_metrics()
-    
+
     try:
         response = await call_next(request)
-        
-        # Record request metrics
-        duration = time.time() - start_time
-        endpoint = request.url.path
-        method = request.method
-        status_code = response.status_code
-        
-        record_request(method, endpoint, status_code, duration)
-        
-        return response
-        
     except Exception as e:
-        # Record error metrics
-        duration = time.time() - start_time
-        endpoint = request.url.path 
-        method = request.method
-        
-        record_request(method, endpoint, 500, duration)
-        raise
-
-
-# Add security event logging middleware
-@app.middleware("http")
-async def security_middleware(request: Request, call_next):
-    """Middleware for security event logging"""
-    try:
-        response = await call_next(request)
-        
-        # Log authentication events
-        if response.status_code == 401:
-            await log_security_event(
-                request, 
-                "authentication_failure", 
-                {"endpoint": str(request.url), "method": request.method}
-            )
-        
-        return response
-    except Exception as e:
+        record_request(request.method, _metrics_endpoint(request), 500, time.time() - start_time)
         # Log security-related exceptions
         await log_security_event(
             request,
@@ -211,28 +170,28 @@ async def security_middleware(request: Request, call_next):
         )
         raise
 
+    record_request(
+        request.method, _metrics_endpoint(request), response.status_code, time.time() - start_time
+    )
 
-@app.middleware("http")
-async def log_bad_requests_middleware(request: Request, call_next):
-    """Log extra context for 400/422 responses (especially multipart uploads).
+    # Log authentication events
+    if response.status_code == 401:
+        await log_security_event(
+            request,
+            "authentication_failure",
+            {"endpoint": str(request.url), "method": request.method}
+        )
 
-    This is intentionally narrow to avoid noisy logs: we only emit for
-    `/api/v1/separate-stems` and only on 400/422.
-    """
-    response = await call_next(request)
-
+    # Extra context for 400/422 on stem uploads. Narrow on purpose, to avoid noisy logs.
     path = request.url.path
     if path == "/api/v1/separate-stems" and response.status_code in (400, 422):
-        uvicorn_logger = logging.getLogger("uvicorn.error")
         headers = request.headers
-        http_version = request.scope.get("http_version")
-
-        uvicorn_logger.warning(
+        logging.getLogger("uvicorn.error").warning(
             "Bad request to %s %s (status=%s, http=%s, ct=%s, cl=%s, te=%s, origin=%s, ua=%s, xff=%s)",
             request.method,
             path,
             response.status_code,
-            http_version,
+            request.scope.get("http_version"),
             headers.get("content-type"),
             headers.get("content-length"),
             headers.get("transfer-encoding"),
@@ -284,12 +243,12 @@ app.include_router(youtube.router, prefix="/api/v1", tags=["YouTube"])
 app.include_router(stems.router, prefix="/api/v1", tags=["Stem Separation"])
 app.include_router(downloads.router, prefix="/api/v1", tags=["Downloads"])
 
-# Mount static files for downloads
-app.mount("/static", StaticFiles(directory=settings.OUTPUT_DIR), name="static")
+# Output files are NOT mounted as static files. A static mount skips API key
+# authentication. Use the authenticated /api/v1/download routes instead.
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @app.get("/")
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def root(request: Request):
     """
     Root endpoint with API information
@@ -328,8 +287,20 @@ async def root(request: Request):
     }
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
+def _redact_url(url: str) -> str:
+    """Remove the user name and password from a URL."""
+    from urllib.parse import urlsplit, urlunsplit
+    parts = urlsplit(url)
+    if parts.username or parts.password:
+        host = parts.hostname or ""
+        if parts.port:
+            host = f"{host}:{parts.port}"
+        parts = parts._replace(netloc=f"***@{host}")
+    return urlunsplit(parts)
+
+
 @app.get("/health")
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def health_check(request: Request):
     """
     Comprehensive health check endpoint
@@ -362,7 +333,7 @@ async def health_check(request: Request):
             await redis_client.ping()
             health_status["checks"]["redis"] = {
                 "status": "healthy",
-                "url": settings.REDIS_URL
+                "url": _redact_url(settings.REDIS_URL)
             }
             await redis_client.close()
         except ImportError:
@@ -374,7 +345,7 @@ async def health_check(request: Request):
             health_status["checks"]["redis"] = {
                 "status": "unhealthy", 
                 "error": str(e),
-                "url": settings.REDIS_URL
+                "url": _redact_url(settings.REDIS_URL)
             }
             health_status["status"] = "unhealthy"
     else:
@@ -467,6 +438,14 @@ async def health_check(request: Request):
             }
             health_status["status"] = "unhealthy"
     
+    # Callers without a valid key get the status only. Paths, URLs and error
+    # text stay private.
+    if not has_detail_access(request.headers.get(settings.API_KEY_HEADER)):
+        health_status["checks"] = {
+            name: {"status": check.get("status")}
+            for name, check in health_status["checks"].items()
+        }
+
     # Return appropriate HTTP status code
     status_code = {
         "healthy": 200,
@@ -477,7 +456,7 @@ async def health_check(request: Request):
     return JSONResponse(health_status, status_code=status_code)
 
 
-@app.get("/metrics")
+@app.get("/metrics", dependencies=[Depends(verify_api_key)])
 async def get_metrics():
     """
     Prometheus metrics endpoint
@@ -502,7 +481,7 @@ async def get_metrics():
             )
         
         # Update memory metrics before generating output
-        update_memory_metrics()
+        update_memory_metrics(force=True)
         
         # Generate Prometheus metrics
         metrics_data = generate_latest()

@@ -3,6 +3,8 @@ Audio stem separation service using Demucs
 """
 
 import os
+import sys
+import asyncio
 import uuid
 import time
 import logging
@@ -13,8 +15,9 @@ from pathlib import Path
 from typing import Dict, Any, List, Optional
 
 from app.core.config import settings
+from app.core.filenames import truncate_utf8
 from app.core.memory_management import (
-    memory_monitor, operation_limiter, process_manager, efficient_processor
+    memory_monitor, operation_limiter, process_manager, efficient_processor, OperationLimitError
 )
 
 logger = logging.getLogger(__name__)
@@ -23,6 +26,28 @@ logger = logging.getLogger(__name__)
 class SecurityError(Exception):
     """Raised when security validation fails"""
     pass
+
+
+class InsufficientStorageError(Exception):
+    """Raised when the server disk has too little free space for a job"""
+    pass
+
+
+def _safe_base_name(original_filename: Optional[str], max_bytes: int = 200) -> str:
+    """Return a safe base name (no directory, no extension) for output files.
+
+    Keeps letters and digits of any language, spaces, and - _ ( ) , characters.
+    Replaces everything else with an underscore. This removes path parts
+    and shell characters, and avoids a path validation failure after a long job.
+    """
+    if not original_filename:
+        return ""
+    name = Path(original_filename.replace("\\", "/")).name
+    base = Path(name).stem if Path(name).suffix else name
+    cleaned = "".join(c if (c.isalnum() or c in " -_(),") else "_" for c in base)
+    # Limit by UTF-8 bytes. A file name can use 255 bytes at most, and the
+    # service adds " - <stem>.<format>" (up to 14 bytes).
+    return truncate_utf8(cleaned, max_bytes).strip(" _")
 
 
 class StemSeparationService:
@@ -156,15 +181,16 @@ class StemSeparationService:
             if usage.free < required_bytes:
                 free_mb = usage.free / (1024 * 1024)
                 req_mb = required_bytes / (1024 * 1024)
-                raise SecurityError(
+                # Log the details. Do not send server paths to the client.
+                logger.error(
                     f"Insufficient disk space in {label} ({path}). "
-                    f"Free: {free_mb:.0f}MB, required (estimate): {req_mb:.0f}MB. "
-                    f"Clean up /var/www/apitools/temp and /var/www/apitools/outputs or move TEMP_DIR/OUTPUT_DIR to a larger disk."
+                    f"Free: {free_mb:.0f}MB, required (estimate): {req_mb:.0f}MB."
                 )
+                raise InsufficientStorageError(f"Insufficient disk space in {label}")
         except FileNotFoundError:
             # If the directory doesn't exist yet, let upstream create it.
             return
-        except SecurityError:
+        except InsufficientStorageError:
             raise
         except Exception as e:
             logger.warning(f"Disk space check failed for {label} at {path}: {type(e).__name__}")
@@ -265,7 +291,9 @@ class StemSeparationService:
 
             # Fail fast if we don't have enough disk space for Demucs WAV outputs.
             # Demucs writes WAV stems into TEMP_DIR before we convert/move them.
-            required_temp_bytes = self._estimate_required_temp_bytes(validated_audio_path, stem_count=len(validated_stems) if validated_stems else 4)
+            required_temp_bytes = await asyncio.to_thread(
+                self._estimate_required_temp_bytes, validated_audio_path, len(validated_stems) if validated_stems else 4
+            )
             if required_temp_bytes is not None:
                 self._ensure_disk_space(Path(self.temp_dir), required_temp_bytes, label="TEMP_DIR")
             # Also ensure some space in OUTPUT_DIR for final converted stems.
@@ -282,7 +310,7 @@ class StemSeparationService:
                     
                     # Build command with validated parameters - NO USER INPUT DIRECTLY PASSED
                     cmd = [
-                        "python", "-m", "demucs.separate",
+                        sys.executable, "-m", "demucs.separate",
                         "-n", validated_model,  # Validated against whitelist
                         "-o", demucs_output_dir,  # Our controlled directory
                         str(validated_audio_path)  # Validated file path
@@ -294,35 +322,39 @@ class StemSeparationService:
                     if not memory_monitor.check_memory_available(estimated_memory):
                         return {
                             'success': False,
-                            'error': f"Insufficient memory for processing. Required: {estimated_memory}MB"
+                            'error': "The server has too little free memory for this job. Try again later.",
+                            'status_code': 503
                         }
                     
-                    # Run Demucs with process monitoring
-                    process = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    
-                    # Monitor process memory usage
-                    process_manager.monitor_process(process, f"demucs_{job_id}")
-                    
-                    # Wait for completion with configurable timeout
+                    # Run Demucs in a worker thread. The subprocess call blocks,
+                    # and it must not block the event loop.
                     timeout_seconds = settings.STEM_SEPARATION_TIMEOUT
-                    try:
-                        stdout, stderr = process.communicate(timeout=timeout_seconds)
-                        result_returncode = process.returncode
-                    except subprocess.TimeoutExpired:
-                        process.terminate()
-                        process.wait()
-                        raise subprocess.TimeoutExpired(cmd, timeout_seconds)
+
+                    def _run_demucs():
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        # Monitor process memory usage
+                        process_manager.monitor_process(process, f"demucs_{job_id}")
+                        try:
+                            _stdout, _stderr = process.communicate(timeout=timeout_seconds)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.communicate()
+                            raise
+                        return process.returncode, _stderr
+
+                    result_returncode, stderr = await asyncio.to_thread(_run_demucs)
                 
                     if result_returncode != 0:
+                        # Log the details. Do not send server paths to the client.
                         logger.error(f"Demucs failed: {stderr}")
                         return {
                             'success': False,
-                            'error': f"Demucs separation failed: {stderr}"
+                            'error': "Stem separation failed. The server log has the details."
                         }
                     
                     # Check memory usage after processing
@@ -363,8 +395,8 @@ class StemSeparationService:
                 'success': False,
                 'error': "Processing timed out (maximum 30 minutes)"
             }
-        except SecurityError:
-            # Re-raise security errors so API layer can handle them appropriately
+        except (SecurityError, InsufficientStorageError, OperationLimitError):
+            # Re-raise so the API layer can return the right status code
             raise
         except Exception as e:
             logger.error(f"Unexpected error during stem separation: {e}")
@@ -430,18 +462,20 @@ class StemSeparationService:
                 if stem_name in available_stems:
                     input_file = available_stems[stem_name]
 
-                    # Generate output filename based on original filename or fallback to stem name
-                    if original_filename:
-                        # Remove extension from original filename if present
-                        base_name = original_filename
-                        if '.' in base_name:
-                            base_name = '.'.join(base_name.split('.')[:-1])
+                    # Generate output filename from a sanitized original name.
+                    base_name = _safe_base_name(original_filename)
+                    if base_name:
                         output_filename = f"{base_name} - {stem_name}.{output_format}"
                     else:
                         output_filename = f"{stem_name}.{output_format}"
 
                     output_file = job_output_dir / output_filename
-                    
+
+                    # The file must stay inside the job directory, for every format.
+                    if output_file.resolve().parent != job_output_dir.resolve():
+                        raise SecurityError("Output path is outside the job directory")
+                    self._validate_file_path(str(output_file), must_exist=False)
+
                     if output_format == "wav":
                         # Use memory-efficient copying for WAV files
                         await efficient_processor.copy_file_chunked(

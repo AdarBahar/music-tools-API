@@ -5,101 +5,63 @@ YouTube to MP3 API routes
 import logging
 import re
 from urllib.parse import urlparse
-from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
+from fastapi import APIRouter, HTTPException, Depends, Request
 from fastapi.responses import JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
+from starlette.concurrency import run_in_threadpool
 
 from app.models.requests import YouTubeToMP3Request
 from app.models.responses import YouTubeToMP3Response, ErrorResponse
 from app.services.youtube_service import YouTubeService
 from app.core.auth import verify_api_key
 from app.core.config import settings
-from app.core.cleanup import cleanup_file
+from app.core.rate_limit import limit
 from app.core.metrics import MetricsContext
 
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Initialize limiter for this module
-limiter = Limiter(key_func=get_remote_address) if settings.ENABLE_RATE_LIMITING else None
+
+_YOUTUBE_HOSTS = {
+    'youtube.com', 'www.youtube.com', 'm.youtube.com', 'music.youtube.com',
+    'youtu.be', 'www.youtu.be',
+}
+# Query parameters that YouTube adds to normal links. Others are rejected.
+_SAFE_QUERY_PARAMS = {
+    'v', 'list', 't', 'start', 'end', 'index',
+    'feature', 'ab_channel', 'si', 'pp', 'app', 'lc',
+}
 
 
 def validate_youtube_url(url: str) -> bool:
     """
-    Validate that URL is a legitimate YouTube URL
+    Validate that a URL is a legitimate YouTube URL
 
-    Args:
-        url: URL string to validate
-
-    Returns:
-        bool: True if URL is valid YouTube URL, False otherwise
-
-    Validates against:
-    - Domain: youtube.com, youtu.be, or their www variants
-    - Format: Valid path structure for YouTube
-    - Safe query parameters only
+    Checks the scheme, the host name (not a substring), the path format
+    and the query parameter names.
     """
     try:
         parsed = urlparse(url)
-
-        # Check for valid YouTube domains
-        valid_domains = [
-            'youtube.com', 'www.youtube.com',
-            'youtu.be', 'www.youtu.be',
-            'm.youtube.com'
-        ]
-
-        if parsed.netloc not in valid_domains:
+        if parsed.scheme not in ('http', 'https'):
+            return False
+        if parsed.hostname not in _YOUTUBE_HOSTS:
             return False
 
-        # Check for valid paths and query parameters
-        if 'youtu.be' in parsed.netloc:
+        if 'youtu.be' in parsed.hostname:
             # youtu.be format: /VIDEO_ID
             if not re.match(r'^/[\w\-]+$', parsed.path):
                 return False
-        else:
-            # youtube.com format: /watch?v=VIDEO_ID or /playlist?list=...
-            if not (parsed.query or parsed.path in ['/', '']):
-                if not re.match(r'^/[\w/\-_]+$', parsed.path):
-                    return False
+        elif parsed.path not in ('', '/') and not re.match(r'^/[\w/\-]+$', parsed.path):
+            return False
 
-            # Validate query parameters - only allow known safe parameters
-            if parsed.query:
-                safe_params = {'v', 'list', 't', 'start', 'end', 'index'}
-                for param in parsed.query.split('&'):
-                    if not param:
-                        continue
-                    param_name = param.split('=')[0]
-                    if param_name not in safe_params:
-                        return False
+        for param in parsed.query.split('&'):
+            if param and param.split('=')[0] not in _SAFE_QUERY_PARAMS:
+                return False
 
         return True
     except Exception:
         return False
 
 
-async def _schedule_file_cleanup(file_path: str, delay_hours: int):
-    """
-    Background task to schedule cleanup of downloaded files after delay period
-    
-    Args:
-        file_path: Path to file to cleanup
-        delay_hours: Hours to wait before cleanup
-    """
-    import asyncio
-    
-    # Wait for the specified delay
-    await asyncio.sleep(delay_hours * 3600)
-    
-    # Clean up the file
-    if cleanup_file(file_path):
-        logger.info(f"Background cleanup removed file: {file_path}")
-    else:
-        logger.warning(f"Background cleanup failed for file: {file_path}")
-
-
-@(limiter.limit(settings.RATE_LIMIT_HEAVY_OPERATIONS) if limiter else (lambda f: f))
 @router.post(
     "/youtube-to-mp3",
     response_model=YouTubeToMP3Response,
@@ -118,9 +80,9 @@ async def _schedule_file_cleanup(file_path: str, delay_hours: int):
     """,
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_HEAVY_OPERATIONS)
 async def youtube_to_mp3(
     request: Request,
-    background_tasks: BackgroundTasks,
     youtube_request: YouTubeToMP3Request
 ) -> YouTubeToMP3Response:
     """
@@ -145,7 +107,10 @@ async def youtube_to_mp3(
 
         # Download the audio with metrics tracking
         with MetricsContext("youtube_download"):
-            result = youtube_service.download_audio(
+            # download_audio is blocking (yt-dlp, ffmpeg). Run it in a worker thread
+            # so the event loop keeps serving other requests.
+            result = await run_in_threadpool(
+                youtube_service.download_audio,
                 url=str(youtube_request.url),
                 audio_quality=youtube_request.audio_quality,
                 audio_format=youtube_request.audio_format,
@@ -153,21 +118,20 @@ async def youtube_to_mp3(
             )
         
         if not result['success']:
-            return YouTubeToMP3Response(
-                success=False,
-                error=result.get('error', 'Unknown error occurred')
+            # 502: the upstream download failed. Keep the same body shape as a success.
+            return JSONResponse(
+                status_code=502,
+                content=YouTubeToMP3Response(
+                    success=False,
+                    error=result.get('error', 'Unknown error occurred')
+                ).model_dump()
             )
         
         # Generate download URL
         download_url = f"/api/v1/download/{result['file_id']}"
         
-        # Schedule cleanup of downloaded file after retention period
-        background_tasks.add_task(
-            _schedule_file_cleanup, 
-            result['file_path'],
-            settings.FILE_RETENTION_HOURS
-        )
-        
+        # The periodic cleanup job removes the file after FILE_RETENTION_HOURS.
+
         return YouTubeToMP3Response(
             success=True,
             message="Audio downloaded and converted successfully",
@@ -178,6 +142,8 @@ async def youtube_to_mp3(
             download_url=download_url
         )
         
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error in youtube_to_mp3: {type(e).__name__}", exc_info=True)
         raise HTTPException(
@@ -209,28 +175,38 @@ async def get_youtube_info(url: str):
             )
 
         import yt_dlp
+        from app.services.youtube_service import build_cookie_opts
 
-        with yt_dlp.YoutubeDL({'quiet': True}) as ydl:
-            info = ydl.extract_info(url, download=False)
-            
-            return {
-                "success": True,
-                "info": {
-                    "title": info.get('title'),
-                    "duration": info.get('duration'),
-                    "thumbnail": info.get('thumbnail'),
-                    "uploader": info.get('uploader'),
-                    "upload_date": info.get('upload_date'),
-                    "view_count": info.get('view_count'),
-                    "description": info.get('description', '')[:500] if info.get('description') else None,
-                    "formats_available": len(info.get('formats', [])),
-                    "audio_formats": [
-                        f for f in info.get('formats', []) 
-                        if f.get('acodec') != 'none' and f.get('vcodec') == 'none'
-                    ][:5]  # Show first 5 audio formats
-                }
+        opts = {'quiet': True, 'noplaylist': True}
+        opts.update(build_cookie_opts())
+
+        def _extract():
+            with yt_dlp.YoutubeDL(opts) as ydl:
+                return ydl.extract_info(url, download=False)
+
+        # yt-dlp blocks. Run it in a worker thread.
+        info = await run_in_threadpool(_extract)
+
+        return {
+            "success": True,
+            "info": {
+                "title": info.get('title'),
+                "duration": info.get('duration'),
+                "thumbnail": info.get('thumbnail'),
+                "uploader": info.get('uploader'),
+                "upload_date": info.get('upload_date'),
+                "view_count": info.get('view_count'),
+                "description": info.get('description', '')[:500] if info.get('description') else None,
+                "formats_available": len(info.get('formats', [])),
+                "audio_formats": [
+                    f for f in info.get('formats', [])
+                    if f.get('acodec') != 'none' and f.get('vcodec') == 'none'
+                ][:5]  # Show first 5 audio formats
             }
-            
+        }
+
+    except HTTPException:
+        raise
     except Exception as e:
         logger.error(f"Error getting YouTube info: {type(e).__name__}", exc_info=True)
         raise HTTPException(

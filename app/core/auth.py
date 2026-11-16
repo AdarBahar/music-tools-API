@@ -4,6 +4,7 @@ Authentication and authorization utilities
 
 import logging
 import hashlib
+import hmac
 from typing import Optional
 from fastapi import HTTPException, Header, Request
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
@@ -18,6 +19,22 @@ class AuthenticationError(HTTPException):
     """Custom authentication error"""
     def __init__(self, detail: str = "Authentication failed"):
         super().__init__(status_code=401, detail=detail)
+
+
+def is_api_key_valid(api_key: Optional[str]) -> bool:
+    """Check a key against the configured keys in constant time."""
+    if not api_key:
+        return False
+    key_valid = False
+    for valid_key in settings.valid_api_keys_list:
+        if hmac.compare_digest(api_key.encode(), valid_key.encode()):
+            key_valid = True
+    return key_valid
+
+
+def has_detail_access(api_key: Optional[str]) -> bool:
+    """True when the caller may see internal details (no key needed if auth is off)."""
+    return (not settings.REQUIRE_API_KEY) or is_api_key_valid(api_key)
 
 
 async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Key")) -> bool:
@@ -43,7 +60,7 @@ async def verify_api_key(x_api_key: Optional[str] = Header(None, alias="X-API-Ke
         raise AuthenticationError("API key required. Provide X-API-Key header.")
     
     # Validate API key against configured keys
-    if x_api_key not in settings.valid_api_keys_list:
+    if not is_api_key_valid(x_api_key):
         logger.warning("Invalid API key attempted")
         raise AuthenticationError("Invalid API key")
 

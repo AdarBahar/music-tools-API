@@ -9,10 +9,9 @@ from pathlib import Path
 from typing import Optional
 from fastapi import APIRouter, HTTPException, Response, Depends, Request
 from fastapi.responses import FileResponse, JSONResponse
-from slowapi import Limiter
-from slowapi.util import get_remote_address
 
 from app.core.config import settings
+from app.core.rate_limit import limit
 from app.core.cleanup import get_directory_stats, cleanup_all_directories
 from app.models.responses import DownloadInfo, StatsResponse
 from app.core.auth import verify_api_key
@@ -20,8 +19,33 @@ from app.core.auth import verify_api_key
 logger = logging.getLogger(__name__)
 router = APIRouter()
 
-# Initialize limiter for this module
-limiter = Limiter(key_func=get_remote_address) if settings.ENABLE_RATE_LIMITING else None
+
+def _display_name(stored_name: str, file_id: str) -> str:
+    """Remove the "<file_id> - " storage prefix from the name the user sees."""
+    if not stored_name.startswith(file_id):
+        return stored_name
+    name = stored_name[len(file_id):].lstrip(" -")
+    if not name or name.startswith("."):
+        name = f"audio{name}"
+    return name
+
+
+def _find_stored_files(file_id: str, output_dir: Path) -> list:
+    """Find stored files for a file ID in the output directory.
+
+    YouTube files are stored directly in the output directory, and the name
+    starts with the file ID. A direct pattern lookup replaces a scan of the
+    full directory tree. The ID is converted to the canonical UUID form first,
+    so no glob character can enter the pattern.
+    """
+    canonical_id = str(uuid.UUID(file_id))
+    found = []
+    for file_path in output_dir.glob(f"{canonical_id}*"):
+        if file_path.is_file():
+            # Verify the path is within output_dir (prevent traversal)
+            _ensure_path_within_directory(file_path, output_dir)
+            found.append(file_path)
+    return found
 
 
 def _validate_uuid(value: str, param_name: str = "identifier") -> None:
@@ -81,13 +105,13 @@ def _ensure_path_within_directory(file_path: Path, allowed_dir: Path) -> None:
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_LIGHT_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/download/{file_id}",
     summary="Download converted audio file",
     description="Download a converted audio file by its file ID. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_LIGHT_OPERATIONS)
 async def download_file(request: Request, file_id: str):
     """
     Download a converted audio file
@@ -103,12 +127,7 @@ async def download_file(request: Request, file_id: str):
         output_dir = settings.OUTPUT_DIR
 
         # Look for files that start with the file_id (not just contain it)
-        matching_files = []
-        for file_path in output_dir.rglob("*"):
-            if file_path.is_file() and file_path.name.startswith(file_id):
-                # Verify the path is within output_dir (prevent traversal)
-                _ensure_path_within_directory(file_path, output_dir)
-                matching_files.append(file_path)
+        matching_files = _find_stored_files(file_id, output_dir)
 
         if not matching_files:
             raise HTTPException(
@@ -122,9 +141,11 @@ async def download_file(request: Request, file_id: str):
         # Determine content type based on file extension
         content_type = _get_content_type(file_path.suffix)
 
+        display_name = _display_name(file_path.name, file_id)
+
         return FileResponse(
             path=str(file_path),
-            filename=file_path.name,
+            filename=display_name,
             media_type=content_type
         )
 
@@ -138,13 +159,64 @@ async def download_file(request: Request, file_id: str):
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_LIGHT_OPERATIONS) if limiter else lambda f: f
+# This route must stay before /download/{job_id}/{filename}. The router matches in order.
+@router.get(
+    "/download/{file_id}/info",
+    response_model=DownloadInfo,
+    summary="Get file information",
+    description="Get information about a downloadable file. Requires authentication when enabled.",
+    dependencies=[Depends(verify_api_key)]
+)
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
+async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
+    """
+    Get information about a file
+
+    - **file_id**: Unique identifier for the file (UUID format)
+
+    Returns file metadata and information.
+    """
+    try:
+        # Validate file_id is a valid UUID format
+        _validate_uuid(file_id, "file_id")
+
+        output_dir = settings.OUTPUT_DIR
+        matching_files = _find_stored_files(file_id, output_dir)
+
+        if not matching_files:
+            raise HTTPException(
+                status_code=404,
+                detail="File not found"
+            )
+
+        file_path = matching_files[0]
+        file_stats = file_path.stat()
+
+        return DownloadInfo(
+            file_id=file_id,
+            filename=_display_name(file_path.name, file_id),
+            file_size_mb=round(file_stats.st_size / (1024 * 1024), 2),
+            content_type=_get_content_type(file_path.suffix),
+            created_at=str(file_stats.st_ctime)
+        )
+
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting file info: {type(e).__name__}")
+        raise HTTPException(
+            status_code=500,
+            detail="Internal server error"
+        )
+
+
 @router.get(
     "/download/{job_id}/{filename}",
     summary="Download specific stem file",
     description="Download a specific stem file from a separation job. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_LIGHT_OPERATIONS)
 async def download_stem_file(request: Request, job_id: str, filename: str):
     """
     Download a specific stem file
@@ -192,63 +264,6 @@ async def download_stem_file(request: Request, job_id: str, filename: str):
         )
 
 
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
-@router.get(
-    "/download/{file_id}/info",
-    response_model=DownloadInfo,
-    summary="Get file information",
-    description="Get information about a downloadable file. Requires authentication when enabled.",
-    dependencies=[Depends(verify_api_key)]
-)
-async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
-    """
-    Get information about a file
-
-    - **file_id**: Unique identifier for the file (UUID format)
-
-    Returns file metadata and information.
-    """
-    try:
-        # Validate file_id is a valid UUID format
-        _validate_uuid(file_id, "file_id")
-
-        output_dir = settings.OUTPUT_DIR
-        matching_files = []
-
-        for file_path in output_dir.rglob("*"):
-            if file_path.is_file() and file_path.name.startswith(file_id):
-                # Verify the path is within output_dir (prevent traversal)
-                _ensure_path_within_directory(file_path, output_dir)
-                matching_files.append(file_path)
-
-        if not matching_files:
-            raise HTTPException(
-                status_code=404,
-                detail="File not found"
-            )
-
-        file_path = matching_files[0]
-        file_stats = file_path.stat()
-
-        return DownloadInfo(
-            file_id=file_id,
-            filename=file_path.name,
-            file_size_mb=round(file_stats.st_size / (1024 * 1024), 2),
-            content_type=_get_content_type(file_path.suffix),
-            created_at=str(file_stats.st_ctime)
-        )
-
-    except HTTPException:
-        raise
-    except Exception as e:
-        logger.error(f"Error getting file info: {type(e).__name__}")
-        raise HTTPException(
-            status_code=500,
-            detail="Internal server error"
-        )
-
-
-@limiter.limit(settings.RATE_LIMIT_INFO_OPERATIONS) if limiter else lambda f: f
 @router.get(
     "/stats",
     response_model=StatsResponse,
@@ -256,6 +271,7 @@ async def get_file_info(request: Request, file_id: str) -> DownloadInfo:
     description="Get statistics about file storage and cleanup status. Requires authentication when enabled.",
     dependencies=[Depends(verify_api_key)]
 )
+@limit(settings.RATE_LIMIT_INFO_OPERATIONS)
 async def get_storage_stats(request: Request) -> StatsResponse:
     """
     Get storage statistics
