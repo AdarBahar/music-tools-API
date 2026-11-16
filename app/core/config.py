@@ -5,7 +5,7 @@ Configuration settings for the Music Tools API Service
 import os
 from pathlib import Path
 from pydantic import model_validator
-from pydantic_settings import BaseSettings
+from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
 class Settings(BaseSettings):
@@ -151,10 +151,11 @@ class Settings(BaseSettings):
     # Logging
     LOG_LEVEL: str = "INFO"
 
-    class Config:
-        env_file = ".env"
-        case_sensitive = True
-        extra = "ignore"  # Allow extra fields to be ignored
+    model_config = SettingsConfigDict(
+        env_file=".env",
+        case_sensitive=True,
+        extra="ignore",  # Allow extra fields to be ignored
+    )
 
 
 # Global settings instance

@@ -3,7 +3,7 @@ Pydantic models for API requests
 """
 
 from typing import Optional, List
-from pydantic import BaseModel, HttpUrl, Field, validator
+from pydantic import BaseModel, HttpUrl, Field, field_validator
 
 from app.core.config import settings
 
@@ -14,32 +14,34 @@ class YouTubeToMP3Request(BaseModel):
     url: HttpUrl = Field(
         ...,
         description="YouTube video URL (supports youtube.com, youtu.be, music.youtube.com)",
-        example="https://www.youtube.com/watch?v=dQw4w9WgXcQ"
+        json_schema_extra={"example": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}
     )
     audio_quality: int = Field(
         default=settings.DEFAULT_AUDIO_QUALITY,
         ge=0, le=10,
         description="Audio quality scale: 0=best quality (~320kbps), 5=balanced (~160kbps), 10=smallest files (~64kbps)",
-        example=0
+        json_schema_extra={"example": 0}
     )
     audio_format: str = Field(
         default=settings.DEFAULT_AUDIO_FORMAT,
         description="Output audio format: mp3, m4a, wav, flac, aac, opus",
-        example="mp3"
+        json_schema_extra={"example": "mp3"}
     )
     extract_metadata: bool = Field(
         default=True,
         description="Extract video metadata (title, duration, thumbnail, etc.)",
-        example=True
+        json_schema_extra={"example": True}
     )
     
-    @validator('audio_format')
+    @field_validator('audio_format')
+    @classmethod
     def validate_audio_format(cls, v):
         if v not in settings.SUPPORTED_AUDIO_FORMATS:
             raise ValueError(f"Unsupported audio format. Supported: {settings.SUPPORTED_AUDIO_FORMATS}")
         return v
     
-    @validator('url')
+    @field_validator('url')
+    @classmethod
     def validate_youtube_url(cls, v):
         from urllib.parse import urlparse
         youtube_domains = {
@@ -67,19 +69,22 @@ class StemSeparationRequest(BaseModel):
         description="Specific stems to extract (default: all)"
     )
     
-    @validator('model')
+    @field_validator('model')
+    @classmethod
     def validate_model(cls, v):
         if v not in settings.SUPPORTED_DEMUCS_MODELS:
             raise ValueError(f"Unsupported model. Supported: {settings.SUPPORTED_DEMUCS_MODELS}")
         return v
     
-    @validator('output_format')
+    @field_validator('output_format')
+    @classmethod
     def validate_output_format(cls, v):
         if v not in settings.SUPPORTED_STEM_FORMATS:
             raise ValueError(f"Unsupported format. Supported: {settings.SUPPORTED_STEM_FORMATS}")
         return v
     
-    @validator('stems')
+    @field_validator('stems')
+    @classmethod
     def validate_stems(cls, v):
         if v is not None:
             valid_stems = ['vocals', 'drums', 'bass', 'other']
