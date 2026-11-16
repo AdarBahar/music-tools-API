@@ -1,5 +1,5 @@
 services:
-  music-tools-API:
+  music-tools-api:
     build: .
     container_name: music-tools-API
     ports:

@@ -7,6 +7,30 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Fixed
+- YouTube files are stored as `<file_id> - <title>.<ext>`. The download link works again. The user still sees the clean title as the file name.
+- Rate limits now apply. All routes use one shared limiter (`app/core/rate_limit.py`).
+- Blocking downloads and Demucs runs no longer stop the event loop.
+- A bad YouTube URL returns 400, not 500. Valid links with `feature`, `ab_channel` and `si` parameters, and `music.youtube.com` links, are accepted.
+- A YouTube link with `list=` downloads one video, not the full playlist.
+- `MAX_FILE_SIZE_MB` and `REDIS_URL` now change the values that depend on them.
+- The `/download/{file_id}/info` route is reachable.
+- Stem output names are sanitized. Names with dots or symbols no longer fail after a long job, and a name cannot leave the job directory.
+- Demucs errors and server paths no longer reach the client.
+- Metric labels use route templates. The number of series no longer grows with each request.
+- The key comparison is constant-time.
+- The compose service name matches the Nginx upstream. `psutil`, `slowapi` and `prometheus-client` are in the core dependency lists.
+
+### Security
+- **BREAKING**: Removed the unauthenticated `/static` mount. Use `/api/v1/download/...`.
+- **BREAKING**: `/metrics` needs the `X-API-Key` header when `REQUIRE_API_KEY=true`.
+- `/health` shows status only to callers without a valid key. The Redis password is always hidden.
+
+### Changed
+- **BREAKING**: Failed operations return an error HTTP status with the same body shape: 502 (download failed), 500 (separation failed), 503 with `Retry-After` (server busy or low memory), 507 (disk full).
+- Old files are removed by the periodic cleanup job only. They live 48 to 72 hours.
+- Browser cookies for yt-dlp are off by default. Set `YOUTUBE_COOKIES_FROM_BROWSER` to turn them on.
+
 ### Changed
 - **BREAKING**: Updated file naming convention for better organization
   - YouTube downloads now use video title as filename (no random IDs)
