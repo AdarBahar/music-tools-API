@@ -3,6 +3,8 @@ Audio stem separation service using Demucs
 """
 
 import os
+import sys
+import asyncio
 import uuid
 import time
 import logging
@@ -265,7 +267,9 @@ class StemSeparationService:
 
             # Fail fast if we don't have enough disk space for Demucs WAV outputs.
             # Demucs writes WAV stems into TEMP_DIR before we convert/move them.
-            required_temp_bytes = self._estimate_required_temp_bytes(validated_audio_path, stem_count=len(validated_stems) if validated_stems else 4)
+            required_temp_bytes = await asyncio.to_thread(
+                self._estimate_required_temp_bytes, validated_audio_path, len(validated_stems) if validated_stems else 4
+            )
             if required_temp_bytes is not None:
                 self._ensure_disk_space(Path(self.temp_dir), required_temp_bytes, label="TEMP_DIR")
             # Also ensure some space in OUTPUT_DIR for final converted stems.
@@ -282,7 +286,7 @@ class StemSeparationService:
                     
                     # Build command with validated parameters - NO USER INPUT DIRECTLY PASSED
                     cmd = [
-                        "python", "-m", "demucs.separate",
+                        sys.executable, "-m", "demucs.separate",
                         "-n", validated_model,  # Validated against whitelist
                         "-o", demucs_output_dir,  # Our controlled directory
                         str(validated_audio_path)  # Validated file path
@@ -297,26 +301,28 @@ class StemSeparationService:
                             'error': f"Insufficient memory for processing. Required: {estimated_memory}MB"
                         }
                     
-                    # Run Demucs with process monitoring
-                    process = subprocess.Popen(
-                        cmd,
-                        stdout=subprocess.PIPE,
-                        stderr=subprocess.PIPE,
-                        text=True
-                    )
-                    
-                    # Monitor process memory usage
-                    process_manager.monitor_process(process, f"demucs_{job_id}")
-                    
-                    # Wait for completion with configurable timeout
+                    # Run Demucs in a worker thread. The subprocess call blocks,
+                    # and it must not block the event loop.
                     timeout_seconds = settings.STEM_SEPARATION_TIMEOUT
-                    try:
-                        stdout, stderr = process.communicate(timeout=timeout_seconds)
-                        result_returncode = process.returncode
-                    except subprocess.TimeoutExpired:
-                        process.terminate()
-                        process.wait()
-                        raise subprocess.TimeoutExpired(cmd, timeout_seconds)
+
+                    def _run_demucs():
+                        process = subprocess.Popen(
+                            cmd,
+                            stdout=subprocess.PIPE,
+                            stderr=subprocess.PIPE,
+                            text=True
+                        )
+                        # Monitor process memory usage
+                        process_manager.monitor_process(process, f"demucs_{job_id}")
+                        try:
+                            _stdout, _stderr = process.communicate(timeout=timeout_seconds)
+                        except subprocess.TimeoutExpired:
+                            process.kill()
+                            process.communicate()
+                            raise
+                        return process.returncode, _stderr
+
+                    result_returncode, stderr = await asyncio.to_thread(_run_demucs)
                 
                     if result_returncode != 0:
                         logger.error(f"Demucs failed: {stderr}")

@@ -7,6 +7,7 @@ import re
 from urllib.parse import urlparse
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Depends, Request
 from fastapi.responses import JSONResponse
+from starlette.concurrency import run_in_threadpool
 
 from app.models.requests import YouTubeToMP3Request
 from app.models.responses import YouTubeToMP3Response, ErrorResponse
@@ -141,7 +142,10 @@ async def youtube_to_mp3(
 
         # Download the audio with metrics tracking
         with MetricsContext("youtube_download"):
-            result = youtube_service.download_audio(
+            # download_audio is blocking (yt-dlp, ffmpeg). Run it in a worker thread
+            # so the event loop keeps serving other requests.
+            result = await run_in_threadpool(
+                youtube_service.download_audio,
                 url=str(youtube_request.url),
                 audio_quality=youtube_request.audio_quality,
                 audio_format=youtube_request.audio_format,
