@@ -1,0 +1,33 @@
+# Keep the image small and free of local files and secrets
+.git
+.github
+.codeagent
+.env
+.env.*
+!.env.example
+
+# Virtual environment and caches
+bin/
+lib/
+include/
+share/
+pyvenv.cfg
+venv/
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# Local data and generated archives
+data/
+uploads/
+outputs/
+temp/
+logs/
+music-tools-api-dist.*
+
+# Tests and documentation are not needed at run time
+tests/
+docs/
+examples/
+*.md
+!README.md

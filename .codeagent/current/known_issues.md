@@ -1,54 +1,32 @@
 # Known Issues
 
-## Security Issues
+This file lists the open problems. The review of 2026-11-16 closed the security, bug and basic performance items. See `CHANGELOG.md` for the fixes.
 
-### High Priority
-- **No API Authentication**: All endpoints are publicly accessible without authentication
-- **No Rate Limiting**: API vulnerable to abuse and resource exhaustion attacks
-- **Input Validation**: Limited validation of YouTube URLs and uploaded files
+## Open
 
-## Performance Issues
+### Performance
+- **Model reload for each request**: each stem job starts a new Demucs process, so torch and the model weights load again. A resident worker would remove this cost.
+- **Two-step MP3 output**: Demucs writes WAV, then ffmpeg converts each stem. The Demucs `--mp3` option can do this in one step. A real Demucs run must verify the output layout first.
+- **GPU detection**: there is no automatic GPU detection for Demucs.
 
-### Medium Priority
-- **GPU Detection**: No automatic GPU detection/fallback for Demucs processing
-- ~~**Memory Management**: Large audio files may cause memory issues during processing~~ **FIXED** ✅ - Implemented comprehensive memory management with streaming uploads, process monitoring, and resource limits
-- **Concurrent Processing**: Limited concurrency controls for resource-intensive operations
+### Operations
+- **No job queue**: separation and download requests stay open until the work ends. A job queue (HTTP 202 and a status route) is the better design. Celery and Redis are installed but not used.
+- **Memory estimate**: the estimate is file size x 4. It is below the real Demucs need, and the check uses the API process memory, not the Demucs process.
+- **Nginx `/downloads/` alias**: `nginx.conf` can serve the output directory without an API key. Check that `/var/www/downloads` does not point to the output directory.
+- **Real Demucs test**: the automated tests use a fake Demucs. Run one real separation on the server after each deployment change.
 
-## Operational Issues
+### Technical debt
+- **Old root test scripts**: `test_auth.py`, `test_naming_convention.py` and `test_stems_default_behavior.py` are print scripts. Pytest ignores them. The `tests/` folder has the real tests.
+- **Pydantic V1 validators**: `app/models/requests.py` uses `@validator`, which is deprecated.
+- **Old report files**: the repository root has several one-time report files (`code_review_*.md`, `SECURITY_FIXES_*.md` and others). Move them to `docs/`.
 
-### Medium Priority
-- **Health Monitoring**: No health check or monitoring endpoints implemented
-- **Error Recovery**: Limited error handling and recovery mechanisms
-- **Logging**: Basic logging structure, needs improvement for production monitoring
+## Upstream dependencies
 
-## Technical Debt
+- **yt-dlp**: YouTube changes can break downloads. Update yt-dlp often.
+- **Demucs models**: the first use of a model needs an internet connection to download it.
+- **FFmpeg**: format conversion needs a system FFmpeg.
 
-### Low Priority
-- **Test Coverage**: No automated tests implemented
-- **Documentation**: Some API edge cases not documented
-- **Configuration**: Environment variable validation could be improved
+## Known behavior
 
-## Known Workarounds
-
-- **Large Files**: Use lower quality settings for very large audio files to manage memory
-- **GPU Issues**: CPU processing still functional if GPU setup fails
-- **Redis Connection**: Service degrades gracefully if Redis is unavailable (synchronous processing)
-
-## Upstream Dependencies
-
-- **yt-dlp**: Occasional YouTube API changes may break video downloads
-- **Demucs Models**: Model downloads require internet connection on first use
-- **FFmpeg**: Audio format conversion depends on system FFmpeg installation
-
-## Browser Compatibility
-
-- **CORS**: Current CORS settings may need adjustment for production use
-- **File Upload**: Large file uploads may timeout in some browser configurations
-
-## TODO: Issue Resolution
-
-- [ ] Implement comprehensive error handling
-- [ ] Add health monitoring endpoints
-- [ ] Set up automated testing pipeline
-- [ ] Add input validation and sanitization
-- [ ] Implement proper logging and monitoring
+- **Redis**: if Redis is not available, rate limits use memory storage for each process.
+- **Old files**: the periodic cleanup removes files older than `FILE_RETENTION_HOURS`. Files live up to `FILE_RETENTION_HOURS` + `CLEANUP_INTERVAL_HOURS`.
