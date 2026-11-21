@@ -32,7 +32,7 @@
 
 - [ ] Add comprehensive error handling
 - [ ] Improve logging structure and levels
-- [ ] Add unit and integration tests
+- [ ] Add integration tests (unit tests exist in `tests/`)
 - [ ] Code coverage reporting
 - [ ] CI/CD pipeline setup
 

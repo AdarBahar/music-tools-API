@@ -699,14 +699,12 @@ For subsequent deployments, use the automated deploy script:
 ```
 
 The script will:
-1. Create a distribution tarball (excluding venv, cache, etc.)
-2. Upload to `/tmp-apitools` on the server
-3. Backup the current deployment
-4. Deploy new files to `/var/www/apitools`
-5. Install/update Python dependencies
-6. Restart the systemd service
-7. Verify health check
-8. Log the deployment
+1. Create a distribution tarball (excluding venv, cache, logs, etc.)
+2. Upload the tarball to the server
+3. Create a backup of the current deployment on the server
+4. Deploy the new files to `/var/www/apitools` and install the Python dependencies
+5. Verify the deployment
+6. Append an entry to `/var/www/apitools/logs/deployment.log`
 
 **Prerequisites:**
 - SSH config with `Host apitools` pointing to your server

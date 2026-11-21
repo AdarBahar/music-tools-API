@@ -46,7 +46,7 @@ RATE_LIMIT_STORAGE_URI=redis://localhost:6379/0
 ```bash
 # Requests per minute by operation type
 RATE_LIMIT_HEAVY_OPERATIONS="3/minute"    # Stem separation, YouTube downloads  
-RATE_LIMIT_LIGHT_OPERATIONS="20/minute"   # Downloads, model lists
+RATE_LIMIT_LIGHT_OPERATIONS="20/minute"   # File downloads
 RATE_LIMIT_INFO_OPERATIONS="60/minute"    # Health checks, info endpoints
 ```
 
