@@ -11,7 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - YouTube files are stored as `<file_id> - <title>.<ext>`. The download link works again. The user still sees the clean title as the file name.
 - Rate limits now apply. All routes use one shared limiter (`app/core/rate_limit.py`).
 - Blocking downloads and Demucs runs no longer stop the event loop.
-- A bad YouTube URL returns 400, not 500. Valid links with `feature`, `ab_channel` and `si` parameters, and `music.youtube.com` links, are accepted.
+- A YouTube URL with an unsupported path or query parameter returns 400. A URL on another host returns 422. Neither returns 500. Links with `feature`, `ab_channel` and `si` parameters, and `music.youtube.com` links, are accepted.
 - A YouTube link with `list=` downloads one video, not the full playlist.
 - `MAX_FILE_SIZE_MB` and `REDIS_URL` now change the values that depend on them.
 - The `/download/{file_id}/info` route is reachable.
@@ -76,7 +76,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   - Multi-service Docker Compose setup
   - Redis integration for background tasks
   - Nginx reverse proxy configuration
-- Background task processing with Celery
+- Background task processing (Celery is listed as a dependency. The current code does not use it.)
 - Automatic file cleanup system
 - Health check endpoints
 - Comprehensive logging
@@ -124,13 +124,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - GPU acceleration for AI models
 - Configurable resource limits
 
-## [Unreleased]
+## Planned
 
-### Planned Features
 - Playlist download support
 - Additional audio formats
 - Advanced stem separation options
-- Rate limiting
 - User authentication
 - Webhook notifications
 - Batch API endpoints
