@@ -53,7 +53,7 @@ def test_size_and_redis_settings_follow_environment(monkeypatch):
     monkeypatch.delenv("RATE_LIMIT_STORAGE_URI")
     s = Settings()
     assert s.MAX_FILE_SIZE_BYTES == 10 * 1024 * 1024
-    assert s.CELERY_BROKER_URL == s.CELERY_RESULT_BACKEND == s.RATE_LIMIT_STORAGE_URI == "redis://other:6379/5"
+    assert s.RATE_LIMIT_STORAGE_URI == "redis://other:6379/5"
 
 
 def test_explicit_limiter_uri_wins():

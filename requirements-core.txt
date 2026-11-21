@@ -23,8 +23,7 @@ psutil>=5.9.0
 slowapi>=0.1.9
 prometheus-client>=0.18.0
 
-# Background Tasks
-celery>=5.3.0
+# Rate limit storage
 redis>=5.0.0
 
 # Basic scientific computing

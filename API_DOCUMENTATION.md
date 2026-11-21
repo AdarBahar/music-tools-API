@@ -2,365 +2,320 @@
 
 ## Overview
 
-The Music Tools API provides REST endpoints for YouTube to MP3 conversion and audio stem separation using AI. The API is built with FastAPI and provides automatic interactive documentation.
+The Music Tools API has REST endpoints for two tasks:
+
+- It downloads the audio of a YouTube video.
+- It separates an uploaded audio file into stems (vocals, drums, bass, and other) with Demucs.
+
+The examples in this document use port 8000, the port of a manual run. Docker Compose publishes the API on host port 8001.
 
 ## Base URL
 
-Docker Compose maps the API to host port 8001. A manual run (`python main.py`) uses port 8000. The examples in this document use port 8000 unless they say otherwise.
+Docker Compose maps the API to host port 8001. A manual run (`python main.py`) uses port 8000.
 
 ```
 http://localhost:8000
 ```
 
-## Interactive Documentation
+## Interactive documentation
 
-The Swagger UI and ReDoc pages exist only when `DEBUG=true`. The Compose file sets `DEBUG=false`.
+The Swagger UI, ReDoc, and the OpenAPI schema exist only when `DEBUG=true`. Otherwise they return HTTP 404.
 
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
+- **OpenAPI schema**: `http://localhost:8000/openapi.json`
 
 ## Authentication
 
-The API supports optional API key authentication. By default, authentication is disabled. For production use, enable API key authentication by setting `REQUIRE_API_KEY=true` in the environment and providing `VALID_API_KEYS` with comma-separated keys. All authenticated requests must include the `X-API-Key` header.
+API key checks are off by default (`REQUIRE_API_KEY=false`). To turn them on, set `REQUIRE_API_KEY=true` and set `VALID_API_KEYS` to a comma-separated list of keys. Send a key in the `X-API-Key` header.
 
-**Note:** Sensitive API documentation (`/docs`, `/redoc`, `/openapi.json`) is automatically disabled in production when `DEBUG=false`.
+When checks are on, these routes require a valid key:
 
-## Rate Limiting
+- `POST /api/v1/youtube-to-mp3` and `GET /api/v1/youtube-info`
+- `POST /api/v1/separate-stems`, `GET /api/v1/models`, and `GET /api/v1/formats`
+- All `/api/v1/download/...` routes, `GET /api/v1/stats`, and `POST /api/v1/cleanup`
+- `GET /metrics`
 
-The API includes rate limiting via slowapi. Different operation types have different limits:
-- **Light operations** (health checks, info queries): Higher rate limit
-- **Heavy operations** (conversions, stem separation): Lower rate limit
+These routes never require a key: `GET /` and `GET /health`. When checks are on, `/health` shows only the status of each check to callers without a valid key.
 
-Rate limiting can be enabled or disabled with `ENABLE_RATE_LIMITING` in the environment. Limits apply per client IP address. The client address comes from the socket, unless the request comes from a proxy listed in `TRUSTED_PROXIES`.
+A missing key returns HTTP 401:
 
-## File Naming Convention
+```json
+{
+  "detail": "API key required. Provide X-API-Key header."
+}
+```
 
-The API uses intelligent file naming to make downloads easy to organize and identify.
+An invalid key returns HTTP 401 with the detail `Invalid API key`.
 
-### YouTube Downloads
+## Rate limits
 
-Files are named using the video title for immediate recognition:
+Rate limits apply when `ENABLE_RATE_LIMITING=true` (the default). The limit applies per client IP address.
 
-- **Format**: `{Video Title}.{format}`
-- **Example**: `Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster).mp3`
-- **Benefits**: No random UUIDs, human-readable filenames
+| Route | Limit |
+|-------|-------|
+| `POST /api/v1/youtube-to-mp3` | 3 per minute |
+| `POST /api/v1/separate-stems` | 3 per minute |
+| `GET /api/v1/download/...` (files and stems) | 20 per minute |
+| `GET /api/v1/download/{file_id}/info`, `GET /api/v1/models`, `GET /api/v1/stats`, `GET /health`, `GET /` | 60 per minute |
+| `GET /api/v1/youtube-info`, `GET /api/v1/formats`, `POST /api/v1/cleanup` | No limit |
 
-### Stem Separation
+The limit values come from `RATE_LIMIT_HEAVY_OPERATIONS`, `RATE_LIMIT_LIGHT_OPERATIONS`, and `RATE_LIMIT_INFO_OPERATIONS`.
 
-Stem files preserve the relationship with their source:
+A client over the limit receives HTTP 429:
 
-- **With Original Filename**: `{Original Filename} - {stem_type}.{format}`
-- **Example**: `Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) - vocals.mp3`
-- **Fallback**: `{stem_type}.{format}` (when no original filename available)
-- **Stem Types**: vocals, drums, bass, other
+```json
+{
+  "error": "Rate limit exceeded: 60 per 1 minute"
+}
+```
 
-### Character Sanitization
+The client address comes from the socket. The `X-Forwarded-For` header counts only when the direct peer is listed in `TRUSTED_PROXIES` (default `127.0.0.1,::1`).
 
-For filesystem compatibility, the following rules apply:
+## Errors
 
-- **Allowed Characters**: Letters, numbers, spaces, hyphens (-), underscores (_), periods (.), parentheses ()
-- **Removed Characters**: `/`, `\`, `:`, `*`, `?`, `"`, `<`, `>`, `|`
-- **Length Limit**: Filenames are truncated to 200 characters maximum
-- **Encoding**: UTF-8 compatible
+The API uses two body formats for errors.
 
-### Examples
+**Routing, validation, and authentication errors** use FastAPI's `detail` field:
 
-| Input | Output Filename |
-|-------|----------------|
-| `Song: Title/Mix` | `Song Title Mix.mp3` |
-| `Artist - Song (Official Video)` | `Artist - Song (Official Video).mp3` |
-| `Very Long Title That Exceeds...` | `Very Long Title That Exceeds The Character Limit And Gets Truncated Properly To Avoid Filesystem Issues While Still Maintaining Readability And Usefulness For The End User Who Wants To Identify Their Downloaded Files Easily.mp3` |
+```json
+{
+  "detail": "Invalid file_id format"
+}
+```
+
+A validation error (HTTP 422) returns a list in `detail`. Each item has `loc`, `msg`, and `type`.
+
+**Processing errors** return the same body shape as a success, with `success` set to `false` and an `error` text. The status code gives the cause. The error text does not include Demucs output or server paths.
+
+| Status | Meaning | Routes |
+|--------|---------|--------|
+| 400 | Invalid parameter, invalid YouTube URL path or query, invalid UUID, unsupported model or format, invalid stem name | Most routes |
+| 401 | API key missing or invalid | Routes that need a key |
+| 404 | File not found | Download routes |
+| 413 | Upload larger than `MAX_FILE_SIZE_MB` | `POST /api/v1/separate-stems` |
+| 422 | Invalid request body: URL on another host, unsupported `audio_format`, `audio_quality` outside 0 to 10 | `POST /api/v1/youtube-to-mp3` |
+| 429 | Rate limit exceeded | Routes with a limit |
+| 500 | Internal error or separation failed | Any route |
+| 502 | Download failed | `POST /api/v1/youtube-to-mp3` |
+| 503 | Server busy or low memory. The response has the header `Retry-After: 30`. | `POST /api/v1/separate-stems` |
+| 504 | Request time limit reached | Any route |
+| 507 | Disk full | `POST /api/v1/separate-stems` |
 
 ## Endpoints
 
-### Health Check
+### GET /health
 
-#### GET /health
-Check API health status.
+Check the health of the service. This route needs no key.
 
-**Response:**
+The response has an overall `status` (`healthy`, `degraded`, or `unhealthy`) and a `checks` object. The HTTP status is 200 for `healthy` and `degraded`, and 503 for `unhealthy`. The `redis` check appears with `ENABLE_RATE_LIMITING=true`. With rate limits off, it shows `"status": "disabled"`.
+
+With a valid key, or when checks are off, each check has details:
+
 ```json
 {
   "status": "healthy",
-  "service": "music-tools-api"
-}
-```
-
-### YouTube to MP3 Conversion
-
-#### POST /api/v1/youtube-to-mp3
-Convert a YouTube video to MP3 format.
-
-**Request Body:**
-```json
-{
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "audio_quality": 0,
-  "audio_format": "mp3",
-  "extract_metadata": true
-}
-```
-
-**Parameters:**
-- `url` (required): YouTube video URL
-- `audio_quality` (optional): Audio quality 0-10 (0=best, 10=worst, default: 0)
-- `audio_format` (optional): Output format (mp3, m4a, wav, flac, aac, opus, default: mp3)
-- `extract_metadata` (optional): Extract video metadata (default: true)
-
-#### Audio Quality Reference
-
-The `audio_quality` parameter accepts integer values from 0 to 10:
-
-| Value | Quality Level | Typical Bitrate | File Size (4min) | Use Case |
-|-------|---------------|----------------|------------------|----------|
-| 0     | Best          | ~320 kbps      | ~9-10 MB        | Archival, audiophiles |
-| 1     | Excellent     | ~280 kbps      | ~8-9 MB         | High-end listening |
-| 2     | Very High     | ~256 kbps      | ~7-8 MB         | Premium quality |
-| 3     | High          | ~224 kbps      | ~6-7 MB         | High quality listening |
-| 4     | Good          | ~192 kbps      | ~5-6 MB         | Good quality |
-| 5     | Default       | ~160 kbps      | ~4-5 MB         | General use (balanced) |
-| 6     | Acceptable    | ~128 kbps      | ~3-4 MB         | Standard quality |
-| 7     | Lower         | ~112 kbps      | ~3 MB           | Mobile, streaming |
-| 8     | Poor          | ~96 kbps       | ~2-3 MB         | Low bandwidth |
-| 9     | Very Poor     | ~80 kbps       | ~2 MB           | Very low bandwidth |
-| 10    | Worst         | ~64 kbps       | ~2 MB           | Voice, podcasts only |
-
-**Quality Examples:**
-```json
-// Best quality (recommended for music)
-{
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "audio_quality": 0,
-  "audio_format": "mp3"
-}
-
-// Balanced quality/size (default)
-{
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "audio_quality": 5,
-  "audio_format": "mp3"
-}
-
-// Small file size (for mobile/streaming)
-{
-  "url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ",
-  "audio_quality": 8,
-  "audio_format": "mp3"
-}
-```
-
-#### Supported Audio Formats
-
-The `audio_format` parameter supports the following formats:
-
-| Format | Extension | Description | Quality | File Size |
-|--------|-----------|-------------|---------|-----------|
-| `mp3`  | .mp3      | MPEG Audio Layer 3 (default) | Good | Medium |
-| `m4a`  | .m4a      | MPEG-4 Audio | Very Good | Medium |
-| `wav`  | .wav      | Waveform Audio File | Lossless | Large |
-| `flac` | .flac     | Free Lossless Audio Codec | Lossless | Large |
-| `aac`  | .aac      | Advanced Audio Coding | Good | Small |
-| `opus` | .opus     | Opus Audio Codec | Excellent | Small |
-
-**Format Recommendations:**
-- **MP3**: Universal compatibility, good quality/size balance
-- **M4A**: Better quality than MP3 at same bitrate, Apple ecosystem
-- **FLAC**: Lossless quality, larger files, audiophile choice
-- **WAV**: Uncompressed, largest files, studio quality
-- **AAC**: Good for mobile devices, smaller files
-- **OPUS**: Best quality/size ratio, modern codec
-
-**Response:**
-```json
-{
-  "success": true,
-  "message": "Audio downloaded and converted successfully",
-  "file_id": "abc123-def456-ghi789",
-  "filename": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster).mp3",
-  "file_size_mb": 3.45,
-  "metadata": {
-    "title": "Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster)",
-    "duration": 213,
-    "thumbnail_url": "https://...",
-    "uploader": "Rick Astley",
-    "upload_date": "20091025",
-    "view_count": 1234567890,
-    "description": "The official video for..."
-  },
-  "download_url": "/api/v1/download/abc123-def456-ghi789"
-}
-```
-
-#### Filename Convention
-
-YouTube downloads use the video title as the filename for easy identification:
-- **Format**: `{Video Title}.{format}`
-- **Example**: `Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster).mp3`
-- **Character Sanitization**: Special characters are removed for filesystem compatibility
-- **Length Limit**: Titles are truncated to 200 characters if needed
-
-#### GET /api/v1/youtube-info
-Get YouTube video information without downloading.
-
-**Parameters:**
-- `url` (required): YouTube video URL
-
-**Response:**
-```json
-{
-  "success": true,
-  "info": {
-    "title": "Video Title",
-    "duration": 213,
-    "thumbnail": "https://...",
-    "uploader": "Channel Name",
-    "upload_date": "20091025",
-    "view_count": 1234567890,
-    "description": "Video description...",
-    "formats_available": 25,
-    "audio_formats": [...]
+  "service": "music-tools-api",
+  "timestamp": "...",
+  "version": "1.0.0",
+  "checks": {
+    "redis": {"status": "healthy", "url": "redis://localhost:6379/0"},
+    "disk_space": {"status": "healthy", "free_gb": "...", "total_gb": "...", "usage_percent": "..."},
+    "memory": {"status": "healthy", "system_usage_percent": "...", "process_memory_mb": "...", "memory_limit_mb": "..."},
+    "uploads_directory": {"status": "healthy", "path": "...", "exists": true},
+    "outputs_directory": {"status": "healthy", "path": "...", "exists": true},
+    "temp_directory": {"status": "healthy", "path": "...", "exists": true}
   }
 }
 ```
 
-### Stem Separation
+Without a valid key, each entry in `checks` contains only `status`.
 
-#### POST /api/v1/separate-stems
-Separate an audio file into individual stems using AI-powered source separation.
+### POST /api/v1/youtube-to-mp3
 
-**Request:** Multipart form data
-- `file` (required): Audio file to upload (MP3, WAV, FLAC, M4A, AAC, OPUS)
-- `model` (optional): Demucs model to use (default: htdemucs)
-- `output_format` (optional): Output format for stems (default: mp3)
-- `stems` (optional): Comma-separated stems to extract (vocals,drums,bass,other). **Defaults to all stems if empty or null.**
+Download the audio of a YouTube video and convert it.
 
-#### Supported Demucs Models
+**Request body (JSON):**
 
-| Model | Description | Best For | Recommended |
-|-------|-------------|----------|-------------|
-| `htdemucs` | Hybrid Transformer Demucs | General music, best overall quality | ✅ **Default** |
-| `htdemucs_ft` | Fine-tuned Hybrid Transformer | Vocal-heavy tracks, improved vocals | ⭐ Vocals |
-| `mdx_extra` | MDX Extra | Electronic music, EDM | 🎵 Electronic |
-| `mdx_extra_q` | MDX Extra Quantized | Faster processing, good quality | ⚡ Speed |
+| Field | Type | Default | Description |
+|-------|------|---------|-------------|
+| `url` | string | required | A YouTube URL. The host must be `youtube.com`, `www.youtube.com`, `m.youtube.com`, `music.youtube.com`, `youtu.be`, or `www.youtu.be`. |
+| `audio_quality` | integer | `0` | 0 to 10. See [Audio quality](#audio-quality). |
+| `audio_format` | string | `mp3` | `mp3`, `m4a`, `wav`, `flac`, `aac`, or `opus` |
+| `extract_metadata` | boolean | `true` | `true` returns the `metadata` object. `false` skips the metadata request. |
 
-#### Model Selection Guide
+A URL with a `list=` parameter downloads one video. It does not download the playlist.
 
-**For Vocal Separation:**
-- Primary: `htdemucs_ft` (fine-tuned for vocals)
-- Alternative: `htdemucs` (excellent overall)
+**Example:**
 
-**For Electronic/EDM Music:**
-- Primary: `mdx_extra` (optimized for electronic)
-- Fast option: `mdx_extra_q` (quantized, faster)
-
-**For Rock/Pop/General Music:**
-- Primary: `htdemucs` (best overall quality)
-- Alternative: `htdemucs_ft` (if vocals are priority)
-
-**For Speed Priority:**
-- Primary: `mdx_extra_q` (fastest processing)
-- Alternative: Any model with specific stems only
-
-#### Output Formats
-
-| Format | Quality | File Size | Use Case |
-|--------|---------|-----------|----------|
-| `wav` | Uncompressed, highest quality | Large | Professional/studio work |
-| `mp3` | Compressed, good quality | Medium | General use (default) |
-| `flac` | Lossless compression | Medium-Large | Archival quality |
-
-#### Stem Types
-All models separate audio into 4 stems:
-- **`vocals`**: Lead and backing vocals
-- **`drums`**: Drum kit and percussion
-- **`bass`**: Bass guitar and low-frequency instruments
-- **`other`**: All other instruments (guitars, keyboards, etc.)
-
-#### Processing Times
-Processing time depends on the audio length, the model, and the hardware. This project does not publish benchmark figures. The response field `processing_time_seconds` shows the time for each job.
-
-#### Example Requests
-
-**Basic separation (all stems):**
 ```bash
-curl -X POST "http://localhost:8001/api/v1/separate-stems" \
+curl -X POST "http://localhost:8000/api/v1/youtube-to-mp3" \
+  -H "Content-Type: application/json" \
+  -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ", "audio_quality": 0, "audio_format": "mp3"}'
+```
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "message": "Audio downloaded and converted successfully",
+  "file_id": "<UUID>",
+  "filename": "<video title>.mp3",
+  "file_size_mb": 0.0,
+  "metadata": {
+    "title": "...",
+    "duration": 0,
+    "thumbnail_url": "...",
+    "uploader": "...",
+    "upload_date": "YYYYMMDD",
+    "view_count": 0,
+    "description": "..."
+  },
+  "download_url": "/api/v1/download/<UUID>"
+}
+```
+
+The `metadata` value is `null` when `extract_metadata` is `false`. Use the `download_url` value with the download route. The file stays on the server until `FILE_RETENTION_HOURS` has passed (48 hours by default).
+
+#### Audio quality
+
+The effect of `audio_quality` depends on the format:
+
+- **mp3**: The value is passed to the LAME encoder as the variable bitrate setting. 0 gives the highest quality and the largest file. 10 gives the lowest quality and the smallest file. The bitrate depends on the audio content.
+- **m4a and aac**: The value is mapped to the AAC encoder quality range. 0 gives the highest quality.
+- **wav, flac, and opus**: The value has no effect.
+
+The mapping comes from the yt-dlp source code. The m4a and aac output was not checked with a real download.
+
+#### Filename
+
+The file is stored as `<file_id> - <title>.<format>`. The response `filename` and the download name show `<title>.<format>`. The title keeps only letters and digits (in any language), spaces, `-`, `_`, `.`, `(`, and `)`. All other characters are removed. The title is limited to 200 UTF-8 bytes.
+
+| Video title | Filename |
+|-------------|----------|
+| `Song: Title/Mix` | `Song TitleMix.mp3` |
+| `Artist - Song (Official Video)` | `Artist - Song (Official Video).mp3` |
+| `Mr. Song` | `Mr. Song.mp3` |
+
+### GET /api/v1/youtube-info
+
+Get the metadata of a YouTube video. The service does not download the audio.
+
+**Query parameter:**
+- `url` (required): A YouTube URL. The same host and path rules apply as for the POST route.
+
+**Response:**
+
+```json
+{
+  "success": true,
+  "info": {
+    "title": "...",
+    "duration": 0,
+    "thumbnail": "...",
+    "uploader": "...",
+    "upload_date": "YYYYMMDD",
+    "view_count": 0,
+    "description": "...",
+    "formats_available": 0,
+    "audio_formats": []
+  }
+}
+```
+
+The `description` value is cut to 500 characters. The `audio_formats` list shows up to five audio-only formats.
+
+### POST /api/v1/separate-stems
+
+Separate an uploaded audio file into stems.
+
+**Request (multipart form data):**
+
+| Field | Required | Default | Description |
+|-------|----------|---------|-------------|
+| `file` | yes | none | The audio file. The file extension must be `.mp3`, `.wav`, `.flac`, `.m4a`, `.aac`, `.ogg`, `.opus`, or `.wma`. The size limit is `MAX_FILE_SIZE_MB` (100 MB by default). |
+| `model` | no | `htdemucs` | One of the models below. |
+| `output_format` | no | `mp3` | `wav`, `mp3`, or `flac` |
+| `stems` | no | all stems | Comma-separated values: `vocals`, `drums`, `bass`, `other`. An empty value or an omitted field returns all four stems. |
+
+**Models:**
+
+| Model | Description |
+|-------|-------------|
+| `htdemucs` | The default model. Hybrid Transformer Demucs, version 4. |
+| `htdemucs_ft` | A fine-tuned version of `htdemucs`. The upstream project notes that it takes about four times as long. |
+| `mdx_extra` | An MDX-Net model trained with extra training data. |
+| `mdx_extra_q` | A quantized version of `mdx_extra`. It is smaller. The upstream project notes that it can be slightly less accurate. It needs the `demucs[quantized]` extra, which the requirement files install. |
+
+The model descriptions come from the upstream Demucs project, at https://github.com/adefossez/demucs.
+
+**Output formats:**
+
+| Format | Description |
+|--------|-------------|
+| `wav` | Uncompressed. The largest files. |
+| `mp3` | Encoded at a fixed 192 kbps (constant bitrate). |
+| `flac` | Lossless compression. |
+
+**Stem names:** `vocals`, `drums`, `bass`, and `other`. Each request returns the stems that you request. The other stems are `null` in the response.
+
+**Example: all stems:**
+
+```bash
+curl -X POST "http://localhost:8000/api/v1/separate-stems" \
   -F "file=@your-audio.mp3" \
   -F "model=htdemucs" \
   -F "output_format=mp3"
 ```
 
-**Vocals only (faster):**
-```bash
-curl -X POST "http://localhost:8001/api/v1/separate-stems" \
-  -F "file=@your-audio.mp3" \
-  -F "model=htdemucs_ft" \
-  -F "output_format=wav" \
-  -F "stems=vocals"
-```
+**Example: vocals and drums only:**
 
-**Electronic music optimized:**
 ```bash
-curl -X POST "http://localhost:8001/api/v1/separate-stems" \
-  -F "file=@your-edm-track.mp3" \
-  -F "model=mdx_extra" \
-  -F "output_format=flac" \
-  -F "stems=vocals,drums,bass,other"
+curl -X POST "http://localhost:8000/api/v1/separate-stems" \
+  -F "file=@your-audio.mp3" \
+  -F "model=htdemucs" \
+  -F "output_format=wav" \
+  -F "stems=vocals,drums"
 ```
 
 **Response:**
+
 ```json
 {
   "success": true,
   "message": "Stems separated successfully",
-  "job_id": "def456-ghi789-jkl012",
+  "job_id": "<UUID>",
   "stems": {
-    "vocals": "/api/v1/download/def456-ghi789-jkl012/Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) - vocals.mp3",
-    "drums": "/api/v1/download/def456-ghi789-jkl012/Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) - drums.mp3",
-    "bass": "/api/v1/download/def456-ghi789-jkl012/Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) - bass.mp3",
-    "other": "/api/v1/download/def456-ghi789-jkl012/Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) - other.mp3"
+    "vocals": "/api/v1/download/<UUID>/<name> - vocals.mp3",
+    "drums": "/api/v1/download/<UUID>/<name> - drums.mp3",
+    "bass": "/api/v1/download/<UUID>/<name> - bass.mp3",
+    "other": "/api/v1/download/<UUID>/<name> - other.mp3"
   },
-  "processing_time_seconds": 127.45
+  "processing_time_seconds": 0.0
 }
 ```
 
-#### Stem Parameter Behavior
+The stem URLs contain the file name of each stem. A request that asks for only some stems returns `null` for the others.
 
-The `stems` parameter controls which stems to extract:
+The request stays open until the separation ends. Use a long client timeout. Processing time depends on the audio length, the model, and the hardware. The project does not publish benchmark figures. The Docker setup runs Demucs on the CPU, because the Compose file does not request a GPU.
 
-- **Default Behavior**: If `stems` is empty, null, or omitted, **all stems are extracted** (vocals, drums, bass, other)
-- **Specific Stems**: Provide comma-separated values to extract only specific stems
-- **Valid Values**: vocals, drums, bass, other
+#### Stem filename
 
-**Examples:**
-```bash
-# Extract all stems (default behavior)
-curl -X POST "http://localhost:8000/api/v1/separate-stems" \
-  -F "file=@audio.mp3" \
-  -F "model=htdemucs"
+- **With an original name**: `<upload name without extension> - <stem>.<format>`
+- **Without an original name**: `<stem>.<format>`, for example `vocals.mp3`
 
-# Extract only vocals
-curl -X POST "http://localhost:8000/api/v1/separate-stems" \
-  -F "file=@audio.mp3" \
-  -F "stems=vocals"
+The upload name keeps letters and digits (in any language), spaces, `-`, `_`, `(`, `)`, and `,`. Every other character becomes `_`. The name is limited to 200 UTF-8 bytes.
 
-# Extract vocals and drums only
-curl -X POST "http://localhost:8000/api/v1/separate-stems" \
-  -F "file=@audio.mp3" \
-  -F "stems=vocals,drums"
-```
+| Upload name | Stem file name |
+|-------------|----------------|
+| `Mr. Song.mp3` | `Mr_ Song - vocals.mp3` |
+| `Artist - Song (Official Video).mp3` | `Artist - Song (Official Video) - vocals.mp3` |
 
-#### Stem Filename Convention
+### GET /api/v1/models
 
-Stem files are named to preserve the relationship with their source file:
-- **Format**: `{Original Filename} - {stem_type}.{format}`
-- **Example**: `Rick Astley - Never Gonna Give You Up (Official Video) (4K Remaster) - vocals.mp3`
-- **Fallback**: If no original filename is available, uses `{stem_type}.{format}` (e.g., `vocals.mp3`)
-- **Stem Types**: vocals, drums, bass, other
+List the Demucs models and the default model.
 
-#### GET /api/v1/models
-Get available Demucs models with descriptions and recommendations.
-
-**Response:**
 ```json
 {
   "success": true,
@@ -390,10 +345,12 @@ Get available Demucs models with descriptions and recommendations.
 }
 ```
 
-#### GET /api/v1/formats
-Get supported output formats for stem separation.
+The `description` and `recommended` values come from the server code. They are not benchmark results. Use the model table in this document for the upstream facts.
 
-**Response:**
+### GET /api/v1/formats
+
+List the output formats for stem separation and the default format.
+
 ```json
 {
   "success": true,
@@ -421,69 +378,51 @@ Get supported output formats for stem separation.
 }
 ```
 
-### File Downloads
+### GET /api/v1/download/{file_id}
 
-#### GET /api/v1/download/{file_id}
 Download a converted audio file.
 
-**Parameters:**
-- `file_id`: Unique file identifier from conversion
+- `file_id`: The UUID that the YouTube route returned.
+- Returns the file as an attachment. The `Content-Type` header depends on the file extension (for example `audio/mpeg` for `.mp3`).
+- Returns 400 if `file_id` is not a UUID. Returns 404 if the file does not exist.
 
-**Response:** Binary audio file
+### GET /api/v1/download/{job_id}/{filename}
 
-#### GET /api/v1/download/{job_id}/{filename}
-Download a specific stem file.
+Download one stem file.
 
-**Parameters:**
-- `job_id`: Job identifier from stem separation
-- `filename`: Name of the stem file (e.g., "Song Title - vocals.mp3" or "vocals.mp3")
+- `job_id`: The UUID that the stem route returned.
+- `filename`: The stem file name. Use the value from the `stems` object of the response. Encode spaces as `%20` in a URL.
+- Returns 400 if the job ID is not a UUID or the file name is not valid. Returns 404 if the file does not exist.
 
-**Response:** Binary audio file
+### GET /api/v1/download/{file_id}/info
 
-#### GET /api/v1/download/{file_id}/info
-Get file information.
+Get the information of a converted file.
 
-**Response:**
 ```json
 {
-  "file_id": "abc123-def456-ghi789",
-  "filename": "audio_file.mp3",
-  "file_size_mb": 3.45,
+  "file_id": "<UUID>",
+  "filename": "<title>.mp3",
+  "file_size_mb": 0.0,
   "content_type": "audio/mpeg",
-  "created_at": "2021-10-18T14:11:30.123000Z"
+  "created_at": "YYYY-MM-DDTHH:MM:SS.ffffffZ"
 }
 ```
 
-### Storage Management
+The `created_at` value is an ISO 8601 UTC time.
 
-#### GET /api/v1/stats
-Get storage statistics.
+### GET /api/v1/stats
 
-**Response:**
+Get storage statistics for the upload, output, and temp directories.
+
 ```json
 {
   "directories": {
-    "uploads": {
-      "exists": true,
-      "file_count": 5,
-      "total_size_mb": 25.67,
-      "oldest_file_age_hours": 12.5
-    },
-    "outputs": {
-      "exists": true,
-      "file_count": 15,
-      "total_size_mb": 156.78,
-      "oldest_file_age_hours": 8.2
-    },
-    "temp": {
-      "exists": true,
-      "file_count": 0,
-      "total_size_mb": 0,
-      "oldest_file_age_hours": 0
-    }
+    "uploads": {"exists": true, "file_count": 0, "total_size_mb": 0.0, "oldest_file_age_hours": 0},
+    "outputs": {"exists": true, "file_count": 0, "total_size_mb": 0.0, "oldest_file_age_hours": 0},
+    "temp": {"exists": true, "file_count": 0, "total_size_mb": 0.0, "oldest_file_age_hours": 0}
   },
-  "total_files": 20,
-  "total_size_mb": 182.45,
+  "total_files": 0,
+  "total_size_mb": 0.0,
   "cleanup_info": {
     "cleanup_interval_hours": 24,
     "file_retention_hours": 48,
@@ -492,74 +431,65 @@ Get storage statistics.
 }
 ```
 
-#### POST /api/v1/cleanup
-Trigger manual cleanup of old files.
+### POST /api/v1/cleanup
 
-**Response:**
+Remove the files that are older than `FILE_RETENTION_HOURS`. The periodic cleanup job runs the same task every `CLEANUP_INTERVAL_HOURS`.
+
 ```json
 {
   "success": true,
-  "message": "Cleanup completed. Removed 5 files.",
+  "message": "Cleanup completed. Removed 0 files.",
   "details": {
-    "uploads": {
-      "removed_files": 2,
-      "status": "success"
-    },
-    "outputs": {
-      "removed_files": 3,
-      "status": "success"
-    },
-    "temp": {
-      "removed_files": 0,
-      "status": "success"
-    }
+    "uploads": {"removed_files": 0, "status": "success"},
+    "outputs": {"removed_files": 0, "status": "success"},
+    "temp": {"removed_files": 0, "status": "success"}
   }
 }
 ```
 
-## Error Responses
+## Upload limits
 
-All endpoints return error responses in the following format:
+- **Maximum size**: `MAX_FILE_SIZE_MB` (100 MB by default). A larger upload returns 413.
+- **Accepted extensions**: `.mp3`, `.wav`, `.flac`, `.m4a`, `.aac`, `.ogg`, `.opus`, `.wma`. The service checks the extension and the MIME type.
 
-```json
-{
-  "success": false,
-  "error": "Error description",
-  "details": {
-    "additional": "error details"
-  }
-}
-```
+## Request time limits
 
-Common HTTP status codes:
-- `400`: Bad Request (invalid parameters)
-- `404`: Not Found (file not found)
-- `413`: Payload Too Large (file too big)
-- `422`: Unprocessable Entity (validation error)
-- `500`: Internal Server Error
+The server stops a request after these times:
 
-## File Size Limits
+- Stem separation: `STEM_SEPARATION_TIMEOUT` (1800 seconds)
+- YouTube download and info: `YOUTUBE_DOWNLOAD_TIMEOUT` (600 seconds)
+- Health and stats: 30 seconds
+- All other routes: `API_REQUEST_TIMEOUT` (120 seconds)
 
-- Maximum upload size: 100MB (configurable)
-- Supported audio formats: MP3, WAV, FLAC, M4A, AAC, OGG
-
-## Processing Times
-
-Processing time depends on the audio length and the hardware. This project does not publish benchmark figures. The Docker setup runs Demucs on the CPU, because the Compose file does not request a GPU.
+A request that reaches its limit returns HTTP 504.
 
 ## Configuration
 
-Environment variables:
-- `API_HOST`: Server host (default: 0.0.0.0)
-- `API_PORT`: Server port (default: 8000)
-- `MAX_FILE_SIZE_MB`: Maximum upload size (default: 100)
-- `CLEANUP_INTERVAL_HOURS`: Cleanup interval (default: 24)
-- `FILE_RETENTION_HOURS`: File retention period (default: 48)
-- `DEFAULT_DEMUCS_MODEL`: Default separation model (default: htdemucs)
+The file `.env.example` lists all settings with comments. These settings are the most common:
+
+| Setting | Default | Description |
+|---------|---------|-------------|
+| `API_HOST` | `0.0.0.0` | Server host |
+| `API_PORT` | `8000` | Server port for a manual run |
+| `DEBUG` | `false` | Enables the documentation pages and the reload mode |
+| `MAX_FILE_SIZE_MB` | `100` | Upload size limit |
+| `CLEANUP_INTERVAL_HOURS` | `24` | How often the cleanup job runs |
+| `FILE_RETENTION_HOURS` | `48` | How long output files stay on the server |
+| `DEFAULT_AUDIO_QUALITY` | `0` | Default `audio_quality` |
+| `DEFAULT_AUDIO_FORMAT` | `mp3` | Default `audio_format` |
+| `DEFAULT_DEMUCS_MODEL` | `htdemucs` | Default `model` |
+| `DEFAULT_STEM_FORMAT` | `mp3` | Default `output_format` |
+| `REDIS_URL` | `redis://localhost:6379/0` | Redis connection (rate limit storage) |
+| `REQUIRE_API_KEY` | `false` | Turns on API key checks |
+| `VALID_API_KEYS` | (empty) | Comma-separated list of valid keys |
+| `ALLOWED_ORIGINS` | `http://localhost:3000,http://localhost:8080` | Allowed CORS origins |
+| `TRUSTED_PROXIES` | `127.0.0.1,::1` | Proxies that may set `X-Forwarded-For` |
+| `ENABLE_RATE_LIMITING` | `true` | Turns on rate limits |
 
 ## Examples
 
-See the `examples/` directory for:
-- `test_api.py`: Python test script
-- `python_client.py`: Python client library
-- `curl_examples.sh`: cURL command examples
+The `examples/` directory contains:
+
+- `test_api.py`: A Python test script
+- `python_client.py`: A Python client
+- `curl_examples.sh`: cURL examples

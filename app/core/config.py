@@ -100,10 +100,7 @@ class Settings(BaseSettings):
     
     # Background Tasks
     REDIS_URL: str = "redis://localhost:6379/0"
-    # These three follow REDIS_URL unless they are set in the environment.
-    CELERY_BROKER_URL: str = ""
-    CELERY_RESULT_BACKEND: str = ""
-    
+
     # Security
     API_KEY_HEADER: str = "X-API-Key"
     REQUIRE_API_KEY: bool = False
@@ -125,11 +122,7 @@ class Settings(BaseSettings):
 
     @model_validator(mode="after")
     def _derive_redis_urls(self):
-        """Default the Redis based URLs to REDIS_URL after the environment loads."""
-        if not self.CELERY_BROKER_URL:
-            self.CELERY_BROKER_URL = self.REDIS_URL
-        if not self.CELERY_RESULT_BACKEND:
-            self.CELERY_RESULT_BACKEND = self.REDIS_URL
+        """Default the rate limit storage URI to REDIS_URL after the environment loads."""
         if not self.RATE_LIMIT_STORAGE_URI:
             self.RATE_LIMIT_STORAGE_URI = self.REDIS_URL
         return self
