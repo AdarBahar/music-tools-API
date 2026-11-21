@@ -21,7 +21,7 @@ Music Tools API is a standalone REST API service for audio processing that provi
 ## Current Architecture
 
 - **Framework**: FastAPI with async support
-- **Background Tasks**: Worker threads in the API process. Celery is listed as a dependency but not used.
+- **Background Tasks**: Worker threads in the API process. Celery was removed.
 - **AI Models**: Demucs (htdemucs, htdemucs_ft, mdx_extra, mdx_extra_q)
 - **File Processing**: yt-dlp for YouTube downloads, Demucs for stem separation
 - **Containerization**: Docker with docker-compose orchestration

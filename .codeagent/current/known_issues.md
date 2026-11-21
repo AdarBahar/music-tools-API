@@ -10,7 +10,7 @@ This file lists the open problems. The review of 2026-11-16 closed the security,
 - **GPU detection**: there is no automatic GPU detection for Demucs.
 
 ### Operations
-- **No job queue**: separation and download requests stay open until the work ends. A job queue (HTTP 202 and a status route) is the better design. Celery and Redis are installed but not used.
+- **No job queue**: separation and download requests stay open until the work ends. A job queue (HTTP 202 and a status route) is the better design. Redis is used only for rate limit storage. Celery was removed.
 - **Memory estimate**: the estimate is file size x 4. It is below the real Demucs need, and the check uses the API process memory, not the Demucs process.
 - **Nginx `/downloads/` alias**: `nginx.conf` can serve the output directory without an API key. Check that `/var/www/downloads` does not point to the output directory.
 - **Real Demucs test**: the automated tests use a fake Demucs. Run one real separation on the server after each deployment change.

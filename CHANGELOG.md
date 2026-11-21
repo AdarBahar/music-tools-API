@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - The key comparison is constant-time.
 - The compose service name matches the Nginx upstream. `psutil`, `slowapi` and `prometheus-client` are in the core dependency lists.
 - The `mdx_extra_q` model works with the default requirements. The `demucs[quantized]` extra is now a dependency.
+- Removed the unused Celery dependency and the `CELERY_BROKER_URL` and `CELERY_RESULT_BACKEND` settings. Redis is used for rate limit storage only. Set `REDIS_URL` as before.
 
 ### Changed
 - `GET /api/v1/download/{file_id}/info` returns `created_at` as an ISO 8601 UTC time (for example `2021-10-18T14:11:30Z`). It was an epoch number in a string.
