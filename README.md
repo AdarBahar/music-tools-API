@@ -172,7 +172,7 @@ python -m pytest -q     # runs the test suite
 
 - The tests use a fake Demucs. They need no GPU and no network access.
 - For real separation, run `pip install -r requirements-audio.txt`. This command installs PyTorch and Demucs.
-- The `mdx_extra_q` model needs the `demucs[quantized]` extra. The default requirements do not install that extra.
+- The `mdx_extra_q` model needs the `demucs[quantized]` extra. The requirement files install it.
 - CI runs the test suite on Python 3.12. The Docker image uses Python 3.10.
 
 ## Documentation

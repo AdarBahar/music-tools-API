@@ -117,7 +117,7 @@ pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-The `requirements.txt` file installs Demucs and the audio packages. The `mdx_extra_q` model needs the `demucs[quantized]` extra, which the default requirements do not install.
+The `requirements.txt` file installs Demucs with the `quantized` extra, and the audio packages. The `mdx_extra_q` model needs that extra.
 
 ### Step 5: Create the configuration file
 

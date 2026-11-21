@@ -20,24 +20,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Metric labels use route templates. The number of series no longer grows with each request.
 - The key comparison is constant-time.
 - The compose service name matches the Nginx upstream. `psutil`, `slowapi` and `prometheus-client` are in the core dependency lists.
+- The `mdx_extra_q` model works with the default requirements. The `demucs[quantized]` extra is now a dependency.
 
 ### Changed
 - `GET /api/v1/download/{file_id}/info` returns `created_at` as an ISO 8601 UTC time (for example `2021-10-18T14:11:30Z`). It was an epoch number in a string.
 - Pydantic V2 style: `@field_validator`, `json_schema_extra` and `SettingsConfigDict`. The deprecation warnings are gone. `/health` uses a timezone-aware timestamp. The value now ends with `+00:00`. A monitor that parses the old format must accept this suffix.
 - The three old print scripts in the repository root are removed. The new `tests/test_models.py` checks the request models.
 - The one-time report files moved to `docs/`.
-
-### Security
-- **BREAKING**: Removed the unauthenticated `/static` mount. Use `/api/v1/download/...`.
-- **BREAKING**: `/metrics` needs the `X-API-Key` header when `REQUIRE_API_KEY=true`.
-- `/health` shows status only to callers without a valid key. The Redis password is always hidden.
-
-### Changed
 - **BREAKING**: Failed operations return an error HTTP status with the same body shape: 502 (download failed), 500 (separation failed), 503 with `Retry-After` (server busy or low memory), 507 (disk full).
 - Old files are removed by the periodic cleanup job only. They live 48 to 72 hours.
 - Browser cookies for yt-dlp are off by default. Set `YOUTUBE_COOKIES_FROM_BROWSER` to turn them on.
-
-### Changed
 - **BREAKING**: Updated file naming convention for better organization
   - YouTube downloads now use video title as filename (no random IDs)
   - Stem files now include original filename with stem suffix
@@ -47,6 +39,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - **Improved**: Stems parameter now defaults to all stems when empty or null
   - No need to specify `stems=vocals,drums,bass,other` for full separation
   - Empty string, null, or omitted parameter extracts all stems by default
+- The API description and the root endpoint no longer claim Celery or progress tracking. Downloads and separations run in worker threads.
+
+### Security
+- **BREAKING**: Removed the unauthenticated `/static` mount. Use `/api/v1/download/...`.
+- **BREAKING**: `/metrics` needs the `X-API-Key` header when `REQUIRE_API_KEY=true`.
+- `/health` shows status only to callers without a valid key. The Redis password is always hidden.
 
 ### Added
 - Comprehensive test suite for filename generation
@@ -54,7 +52,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Detailed documentation for new naming convention
 - Enhanced API documentation with stems parameter behavior examples
 
-## [1.0.0] - 2024-01-XX
+## [1.0.0] - 2026-11-21
 
 ### Added
 - Initial release of Music Tools API as a standalone project

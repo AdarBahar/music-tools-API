@@ -11,7 +11,7 @@ torchcodec
 
 # Demucs for stem separation (may require manual installation)
 # If automatic install fails, try: pip install demucs --no-deps
-demucs>=4.0.0,<5.0.0
+demucs[quantized]>=4.0.0,<5.0.0
 
 # Advanced audio analysis (optional)
 librosa>=0.10.0,<1.0.0
