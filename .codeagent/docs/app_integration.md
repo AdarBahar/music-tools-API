@@ -289,7 +289,7 @@ Separate an audio file into individual stems (vocals, drums, bass, other).
 | `htdemucs` | Default | Baseline | Hybrid Transformer Demucs |
 | `htdemucs_ft` | Fine-tuned | About 4x slower than `htdemucs` | Fine-tuned version of `htdemucs` |
 | `mdx_extra` | MDX-Net | Not measured | Trained with extra data |
-| `mdx_extra_q` | MDX-Net, quantized | Not measured | Smaller model. Needs the `demucs[quantized]` extra, which the default requirements do not install. |
+| `mdx_extra_q` | MDX-Net, quantized | Not measured | Smaller model. Needs the `demucs[quantized]` extra, which the default requirements install. |
 
 #### Example: Basic Stem Separation
 

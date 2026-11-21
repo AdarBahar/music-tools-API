@@ -8,7 +8,7 @@ Features:
 - YouTube to MP3 conversion with configurable quality
 - AI-powered audio stem separation using Meta's Demucs
 - Multiple audio format support
-- Background task processing
+- Downloads and separations run in worker threads
 - Automatic file cleanup
 - Docker containerization support
 
@@ -98,9 +98,8 @@ app = FastAPI(
     - GPU acceleration support for faster processing
 
     📊 **Features**
-    - Real-time progress tracking
+    - Downloads and separations run in worker threads
     - Automatic file cleanup
-    - Background task processing
     - Comprehensive error handling
     """,
     version="1.0.0",
@@ -281,7 +280,7 @@ async def root(request: Request):
             "YouTube to MP3 conversion",
             "AI-powered audio stem separation",
             "Multiple audio format support",
-            "Background task processing",
+            "Downloads and separations run in worker threads",
             "Automatic file cleanup"
         ]
     }
