@@ -245,10 +245,11 @@ curl -X POST "http://localhost:8000/api/v1/separate-stems" \
 ```
 **Solution:** Reduce request frequency or increase rate limits
 
-**403 Forbidden - CORS Error:**
+**CORS error (browser console, no HTTP 403):**
 ```
 Access to fetch blocked by CORS policy
 ```
+The API does not return a 403 for a CORS failure. The browser blocks the response.
 **Solution:** Add your domain to `ALLOWED_ORIGINS` configuration
 
 ### Debug Mode:

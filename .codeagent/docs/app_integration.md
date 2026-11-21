@@ -36,7 +36,7 @@ The Music Tools API provides two main services:
 
 ## Authentication
 
-All API endpoints require authentication via an API key passed in the `X-API-Key` header.
+API key checks are off by default. When the server sets `REQUIRE_API_KEY=true`, the YouTube, download, stem, model, format, and metrics routes require an API key in the `X-API-Key` header. The root route and `/health` do not require a key.
 
 ```javascript
 const headers = {
@@ -279,16 +279,17 @@ Separate an audio file into individual stems (vocals, drums, bass, other).
 |-------|------|----------|---------|-------------|
 | `file` | file | ✅ | - | Audio file (MP3, WAV, FLAC, M4A) |
 | `model` | string | ❌ | "htdemucs" | Demucs model |
-| `output_format` | string | ❌ | "wav" | Output format: wav, mp3, flac |
+| `output_format` | string | ❌ | "mp3" | Output format: wav, mp3, flac |
 | `stems` | string | ❌ | all | Comma-separated: vocals,drums,bass,other |
 
 #### Available Models
 
 | Model | Quality | Speed | Description |
 |-------|---------|-------|-------------|
-| `htdemucs` | Good | Fast | Default, balanced |
-| `htdemucs_ft` | Better | Slower | Fine-tuned version |
-| `mdx_extra` | Best | Slowest | Highest quality |
+| `htdemucs` | Default | Baseline | Hybrid Transformer Demucs |
+| `htdemucs_ft` | Fine-tuned | About 4x slower than `htdemucs` | Fine-tuned version of `htdemucs` |
+| `mdx_extra` | MDX-Net | Not measured | Trained with extra data |
+| `mdx_extra_q` | MDX-Net, quantized | Not measured | Smaller model. Needs the `demucs[quantized]` extra, which the default requirements do not install. |
 
 #### Example: Basic Stem Separation
 
@@ -531,24 +532,24 @@ main();
 
 ### Error Response Format
 
+Most errors use FastAPI's format:
+
 ```javascript
 {
-  "success": false,
-  "error": "Error description",
-  "details": {
-    "field": "Additional context"
-  }
+  "detail": "Error description"
 }
 ```
+
+Validation errors (status 422) return a list in `detail`. Each item has `loc`, `msg`, and `type`. Pipeline failures (status 500, 502, 503, 507) return `success: false` and an `error` string.
 
 ### Common Errors
 
 | Status Code | Error | Solution |
 |-------------|-------|----------|
 | 401 | Invalid API key | Check your X-API-Key header |
-| 400 | Invalid URL | Ensure URL is a valid YouTube link |
-| 400 | Unsupported format | Use supported formats (mp3, wav, etc.) |
-| 413 | File too large | Reduce file size (max ~200MB) |
+| 400 | Invalid YouTube URL path or query | Use a standard YouTube link |
+| 422 | URL on another host, or unsupported `audio_format` | Use a YouTube host and a supported format (mp3, m4a, wav, flac, aac, opus) |
+| 413 | File too large | Reduce the file size (default limit 100 MB, set by `MAX_FILE_SIZE_MB`) |
 | 429 | Rate limit exceeded | Wait and retry with exponential backoff |
 | 500 | Server error | Retry or contact support |
 
@@ -610,7 +611,7 @@ The API enforces rate limits to ensure fair usage:
 
 | Operation Type | Limit |
 |----------------|-------|
-| Light operations (health, download) | Higher limit |
+| Info operations (health, models, stats) | Higher limit |
 | Heavy operations (convert, separate) | Lower limit |
 
 ### Handling Rate Limits

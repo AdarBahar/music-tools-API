@@ -19,31 +19,20 @@ The Music Tools API follows an API-first design approach:
 
 ### Endpoint Structure
 - **Base Path**: `/api/v1/`
-- **Resource-Based**: `/youtube-to-mp3`, `/stem-separation`
+- **Resource-Based**: `/youtube-to-mp3`, `/separate-stems`
 - **Action-Oriented**: Clear endpoint purposes
 
 ### Response Format
-```json
-{
-  "success": true,
-  "data": { ... },
-  "message": "optional message",
-  "error": null
-}
-```
+Success responses use a flat model per route. Example: `YouTubeToMP3Response` in `app/models/responses.py`. The model has `success`, and the fields for that route.
 
 ### Error Format
+Most errors use FastAPI's `detail` field:
 ```json
 {
-  "success": false,
-  "data": null,
-  "message": "Error description",
-  "error": {
-    "code": "ERROR_CODE",
-    "details": "Detailed error information"
-  }
+  "detail": "Error description"
 }
 ```
+Pipeline failures (download, separation) return the same body shape as a success, with `success: false` and an `error` string. The status code gives the cause (502, 500, 503, 507).
 
 ## Future UI Considerations
 
@@ -56,7 +45,7 @@ When a web UI is implemented:
 
 ## Documentation Design
 
-- **Interactive API Docs**: FastAPI Swagger UI at `/docs`
+- **Interactive API Docs**: FastAPI Swagger UI at `/docs` (only when `DEBUG=true`)
 - **Examples**: Comprehensive curl and Python client examples
 - **Progressive Disclosure**: Basic to advanced usage patterns
 
