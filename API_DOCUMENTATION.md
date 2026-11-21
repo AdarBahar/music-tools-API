@@ -6,11 +6,15 @@ The Music Tools API provides REST endpoints for YouTube to MP3 conversion and au
 
 ## Base URL
 
+Docker Compose maps the API to host port 8001. A manual run (`python main.py`) uses port 8000. The examples in this document use port 8000 unless they say otherwise.
+
 ```
 http://localhost:8000
 ```
 
 ## Interactive Documentation
+
+The Swagger UI and ReDoc pages exist only when `DEBUG=true`. The Compose file sets `DEBUG=false`.
 
 - **Swagger UI**: `http://localhost:8000/docs`
 - **ReDoc**: `http://localhost:8000/redoc`
@@ -27,7 +31,7 @@ The API includes rate limiting via slowapi. Different operation types have diffe
 - **Light operations** (health checks, info queries): Higher rate limit
 - **Heavy operations** (conversions, stem separation): Lower rate limit
 
-Rate limiting can be enabled/disabled via `ENABLE_RATE_LIMITING=true` in the environment. Limits are enforced per client IP address or API key hash in production.
+Rate limiting can be enabled or disabled with `ENABLE_RATE_LIMITING` in the environment. Limits apply per client IP address. The client address comes from the socket, unless the request comes from a proxy listed in `TRUSTED_PROXIES`.
 
 ## File Naming Convention
 
@@ -273,10 +277,7 @@ All models separate audio into 4 stems:
 - **`other`**: All other instruments (guitars, keyboards, etc.)
 
 #### Processing Times
-- **Small file (3-4 min)**: 2-5 minutes
-- **Medium file (5-8 min)**: 5-10 minutes
-- **Large file (10+ min)**: 10-20 minutes
-- **GPU acceleration**: 3-5x faster (if available)
+Processing time depends on the audio length, the model, and the hardware. This project does not publish benchmark figures. The response field `processing_time_seconds` shows the time for each job.
 
 #### Example Requests
 
@@ -420,31 +421,6 @@ Get supported output formats for stem separation.
 }
 ```
 
-#### GET /api/v1/formats
-Get supported output formats.
-
-**Response:**
-```json
-{
-  "success": true,
-  "formats": [
-    {
-      "format": "wav",
-      "description": "WAV - Uncompressed, highest quality",
-      "file_size": "Large",
-      "recommended": true
-    },
-    {
-      "format": "mp3",
-      "description": "MP3 - Compressed, good quality, smaller files",
-      "file_size": "Medium",
-      "recommended": false
-    }
-  ],
-  "default_format": "mp3"
-}
-```
-
 ### File Downloads
 
 #### GET /api/v1/download/{file_id}
@@ -569,9 +545,7 @@ Common HTTP status codes:
 
 ## Processing Times
 
-- YouTube downloads: 10-60 seconds
-- Stem separation: 2-10 minutes (depends on audio length and hardware)
-- GPU acceleration significantly improves stem separation speed
+Processing time depends on the audio length and the hardware. This project does not publish benchmark figures. The Docker setup runs Demucs on the CPU, because the Compose file does not request a GPU.
 
 ## Configuration
 

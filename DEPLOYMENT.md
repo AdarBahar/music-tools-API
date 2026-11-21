@@ -9,7 +9,7 @@
 
 ### 1. Clone and Setup
 ```bash
-cd api-service
+cd music-tools-API
 cp .env.example .env
 # Edit .env file as needed
 ```
@@ -20,16 +20,17 @@ cp .env.example .env
 ```
 
 ### 3. Access the API
-- API: http://localhost:8000
-- Documentation: http://localhost:8000/docs
-- Health Check: http://localhost:8000/health
+The Compose file maps the API to host port 8001.
+- API: http://localhost:8001
+- Documentation: http://localhost:8001/docs (only when `DEBUG=true`)
+- Health Check: http://localhost:8001/health
 
 ## Manual Installation
 
 ### Prerequisites
-- Python 3.8+
+- Python 3.10 or later
 - FFmpeg
-- Redis (for background tasks)
+- Redis (optional; stores the rate limit counters)
 
 ### 1. Install Dependencies
 ```bash
@@ -92,7 +93,7 @@ VALID_API_KEYS=your-secret-key-1,your-secret-key-2
 - **CPU**: 4+ cores (8+ for heavy usage)
 - **RAM**: 8GB minimum, 16GB+ recommended
 - **Storage**: SSD for better I/O performance
-- **GPU**: CUDA-compatible GPU for faster stem separation
+- **GPU**: Optional. The Docker setup does not request a GPU, so Demucs runs on the CPU in the container. Demucs uses CUDA only when the installed PyTorch build supports it and a GPU is visible to the process.
 
 ### Docker Resource Limits
 Adjust in `docker-compose.yml`:
@@ -106,7 +107,7 @@ deploy:
 
 ### File Cleanup
 - Automatic cleanup runs every 24 hours (configurable)
-- Manual cleanup: `curl -X POST http://localhost:8000/api/v1/cleanup`
+- Manual cleanup: `curl -X POST http://localhost:8001/api/v1/cleanup` (Docker port; use 8000 for a manual run)
 - Files older than 48 hours are removed (configurable)
 
 ## Scaling
@@ -117,9 +118,8 @@ deploy:
 - Use shared storage for uploads/outputs
 
 ### Background Processing
-- Celery workers for long-running tasks
-- Redis as message broker
-- Separate worker containers for stem separation
+- The code does not use a task queue. Downloads and separations run in worker threads inside the API process.
+- Redis stores the rate limit counters. Share one Redis instance between API instances so that the limits apply to all of them.
 
 ## Security
 
@@ -131,7 +131,7 @@ VALID_API_KEYS=key1,key2,key3
 
 Use in requests:
 ```bash
-curl -H "X-API-Key: your-key" http://localhost:8000/api/v1/youtube-to-mp3
+curl -X POST -H "X-API-Key: your-key" -H "Content-Type: application/json" -d '{"url": "https://www.youtube.com/watch?v=dQw4w9WgXcQ"}' http://localhost:8001/api/v1/youtube-to-mp3
 ```
 
 ### Rate Limiting
@@ -169,17 +169,18 @@ limit_req_zone $binary_remote_addr zone=api:10m rate=10r/m;
 # Docker logs
 docker-compose logs -f music-tools-api
 
-# Application logs
-tail -f data/logs/app.log
+# Security events are logged to standard output with the "SECURITY" level tag.
+# The application does not write an app.log file.
+docker-compose logs -f music-tools-api
 ```
 
 ### Health Checks
 ```bash
-# API health
-curl http://localhost:8000/health
+# API health (Docker port 8001; use 8000 for a manual run)
+curl http://localhost:8001/health
 
 # Storage stats
-curl http://localhost:8000/api/v1/stats
+curl http://localhost:8001/api/v1/stats
 
 # Container status
 docker-compose ps

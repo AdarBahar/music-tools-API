@@ -199,7 +199,7 @@ Each integration will:
 * Reuse `.codeagent/prompts/` as the source of truth
 * Provide a thin adapter layer
 
-**Details**: see `docs/roadmap.md`
+**Details**: no roadmap file exists yet.
 
 ---
 
@@ -261,7 +261,6 @@ PLAN → AUDIT → IMPLEMENT → REVIEW_NODE → RUN → SELF_CHECK
   current/        # Living project state (project-specific)
   docs/           # Reference docs and archives
 CHANGELOG.md
-COMPATIBILITY.md
 README.md
 ```
 

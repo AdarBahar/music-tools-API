@@ -23,7 +23,7 @@ flowchart LR
   A[.codeagent/prompts\nWorkflow Source of Truth]
   B[OpenCode Wrapper Generator\nopencode-wrap.sh]
   C[.opencode/commands\nGenerated Commands]
-  D[OpenCode Runtime\nAgents: plan | build | review | docs]
+  D[OpenCode Runtime\nAgents: plan | build | review]
 
   A --> B --> C --> D
 ```
@@ -75,7 +75,7 @@ Each file:
 | `run.md`                    | `/run`                    | `build`  |
 | `audit.md`                  | `/audit`                  | `plan`   |
 | `code-review-nodejs.md`     | `/code-review-nodejs`     | `review` |
-| `document.md`               | `/document`               | `docs`   |
+| `document.md`               | `/document`               | `build`  |
 | `self-check-conventions.md` | `/self-check-conventions` | `plan`   |
 
 ---
@@ -151,4 +151,3 @@ The script:
 
 * `docs/generic.md` – chat-based integration
 * `CHANGELOG.md` – kit evolution
-* `COMPATIBILITY.md` – supported tools

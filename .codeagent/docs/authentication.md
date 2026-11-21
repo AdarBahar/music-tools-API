@@ -46,7 +46,7 @@ RATE_LIMIT_STORAGE_URI=redis://localhost:6379/0
 ```bash
 # Requests per minute by operation type
 RATE_LIMIT_HEAVY_OPERATIONS="3/minute"    # Stem separation, YouTube downloads  
-RATE_LIMIT_LIGHT_OPERATIONS="20/minute"   # Downloads, model lists
+RATE_LIMIT_LIGHT_OPERATIONS="20/minute"   # File downloads
 RATE_LIMIT_INFO_OPERATIONS="60/minute"    # Health checks, info endpoints
 ```
 
@@ -245,10 +245,11 @@ curl -X POST "http://localhost:8000/api/v1/separate-stems" \
 ```
 **Solution:** Reduce request frequency or increase rate limits
 
-**403 Forbidden - CORS Error:**
+**CORS error (browser console, no HTTP 403):**
 ```
 Access to fetch blocked by CORS policy
 ```
+The API does not return a 403 for a CORS failure. The browser blocks the response.
 **Solution:** Add your domain to `ALLOWED_ORIGINS` configuration
 
 ### Debug Mode:

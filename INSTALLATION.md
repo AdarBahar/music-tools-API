@@ -1,203 +1,161 @@
 # Installation Guide
 
-This guide provides detailed installation instructions for the Music Tools API across different environments and platforms.
+This guide describes how to install the Music Tools API with Docker and without Docker. For the API endpoints, see [API_DOCUMENTATION.md](API_DOCUMENTATION.md). For a production server, see [DEPLOYMENT.md](DEPLOYMENT.md).
 
-## 📋 Prerequisites
+## Prerequisites
 
-### System Requirements
-- **Operating System**: Linux, macOS, or Windows
-- **CPU**: 2+ cores (4+ recommended)
-- **RAM**: 4GB minimum (8GB+ recommended for stem separation)
-- **Storage**: 10GB free space (for temporary files and AI models)
-- **Network**: Internet connection for downloading dependencies and AI models
+### Resources
 
-### Software Requirements
-- **Python**: 3.8 or higher
-- **FFmpeg**: For audio processing
-- **Redis**: For background task queue (optional for basic usage)
-- **Docker**: For containerized deployment (optional)
+The resource values below are estimates. The real needs depend on the audio length and the Demucs model.
 
-## 🚀 Quick Start (Docker - Recommended)
+- **Operating system**: Linux, macOS, or Windows
+- **CPU**: 2 cores or more
+- **RAM**: 4 GB or more. Stem separation needs more memory.
+- **Disk space**: Enough space for the Docker image or the Python packages, and for the Demucs models
+- **Network**: Internet access to download packages and models
 
-The fastest way to get started is using Docker:
+### Software
+
+- **Python**: 3.10 or later. The Docker image uses Python 3.10. CI runs on Python 3.12.
+- **FFmpeg**: Converts audio files. Required for a manual installation. The Docker image includes it.
+- **Redis**: Stores the rate limit counters. Optional. Without Redis, the rate limiter uses memory, and `/health` reports Redis as unhealthy.
+- **Docker** with Docker Compose: Optional. Recommended for most users.
+
+## Install with Docker (recommended)
 
 ### 1. Install Docker
-- **Windows/macOS**: Download Docker Desktop from https://docker.com
-- **Linux**: Follow your distribution's Docker installation guide
 
-### 2. Clone and Start
+- **Windows and macOS**: Install Docker Desktop from https://www.docker.com.
+- **Linux**: Follow the Docker installation guide for your distribution.
+
+### 2. Clone the repository and start the service
+
 ```bash
-# Clone the repository
 git clone https://github.com/AdarBahar/music-tools-API.git
 cd music-tools-API
-
-# Start the service
-docker-compose up -d
-
-# Verify it's running
-curl http://localhost:8000/health
+cp .env.example .env
+mkdir -p data/uploads data/outputs data/logs
+docker compose up -d --build
 ```
 
-### 3. Access the API
-- **API**: http://localhost:8000
-- **Documentation**: http://localhost:8000/docs
-- **Health Check**: http://localhost:8000/health
+The `.env` file must exist before you start the service. Compose mounts it into the container. The `data/` folders store the uploads, the outputs, and the logs.
 
-## 🔧 Manual Installation
+### 3. Check the service
 
-### Step 1: Install System Dependencies
+```bash
+curl http://localhost:8001/health
+```
+
+The API runs on host port 8001. Compose maps this port to port 8000 in the container. To use another host port, change the `ports` value in `docker-compose.yml`.
+
+The Swagger UI at `http://localhost:8001/docs` is available only when `DEBUG=true`. The Compose file sets `DEBUG=false`.
+
+## Install without Docker
+
+### Step 1: Install the system packages
 
 #### macOS
-```bash
-# Install Homebrew if not already installed
-/bin/bash -c "$(curl -fsSL https://raw.githubusercontent.com/Homebrew/install/HEAD/install.sh)"
 
-# Install dependencies
+```bash
+# Install Homebrew first. See https://brew.sh.
 brew install python@3.10 ffmpeg redis
 brew services start redis
 ```
 
-#### Ubuntu/Debian
+#### Ubuntu and Debian
+
 ```bash
-# Update package list
 sudo apt update
-
-# Install dependencies
 sudo apt install -y python3 python3-pip python3-venv ffmpeg redis-server
-
-# Start Redis
 sudo systemctl start redis-server
 sudo systemctl enable redis-server
 ```
 
-#### CentOS/RHEL/Fedora
-```bash
-# Install EPEL repository (CentOS/RHEL)
-sudo yum install -y epel-release  # CentOS/RHEL
-# OR for Fedora:
-# sudo dnf install -y epel-release
+#### CentOS, RHEL, and Fedora
 
-# Install dependencies
-sudo yum install -y python3 python3-pip ffmpeg redis  # CentOS/RHEL
-# OR for Fedora:
+```bash
+# CentOS and RHEL: install the EPEL repository first.
+sudo yum install -y epel-release
+sudo yum install -y python3 python3-pip ffmpeg redis
+
+# Fedora: use dnf instead of yum.
 # sudo dnf install -y python3 python3-pip ffmpeg redis
 
-# Start Redis
 sudo systemctl start redis
 sudo systemctl enable redis
 ```
 
 #### Windows
-1. **Install Python**: Download from https://python.org (3.8+)
-2. **Install FFmpeg**: 
-   - Download from https://ffmpeg.org
-   - Add to PATH environment variable
-3. **Install Redis**:
-   - Download from https://redis.io
-   - Or use Windows Subsystem for Linux (WSL)
 
-### Step 2: Clone Repository
+1. Install Python 3.10 or later from https://www.python.org.
+2. Install FFmpeg from https://ffmpeg.org. Add the `bin` folder to the `PATH` variable.
+3. Install Redis from https://redis.io, or use Windows Subsystem for Linux (WSL). Redis is optional.
+
+### Step 2: Clone the repository
+
 ```bash
 git clone https://github.com/AdarBahar/music-tools-API.git
 cd music-tools-API
 ```
 
-### Step 3: Create Virtual Environment
+### Step 3: Create a virtual environment
+
 ```bash
-# Create virtual environment
 python3 -m venv venv
 
-# Activate virtual environment
-# Linux/macOS:
+# Linux and macOS:
 source venv/bin/activate
+
 # Windows:
 # venv\Scripts\activate
 ```
 
-### Step 4: Install Python Dependencies
-```bash
-# Upgrade pip
-pip install --upgrade pip
+### Step 4: Install the Python packages
 
-# Install dependencies
+```bash
+pip install --upgrade pip
 pip install -r requirements.txt
 ```
 
-### Step 5: Configure Environment
-```bash
-# Copy environment template
-cp .env.example .env
+The `requirements.txt` file installs Demucs and the audio packages. The `mdx_extra_q` model needs the `demucs[quantized]` extra, which the default requirements do not install.
 
-# Edit configuration (optional)
-nano .env  # or your preferred editor
+### Step 5: Create the configuration file
+
+```bash
+cp .env.example .env
 ```
 
-### Step 6: Start the Service
+Edit `.env` if you need other values. See [Configuration](#configuration).
+
+### Step 6: Start the API
+
 ```bash
-# Start the API server
 uvicorn main:app --host 0.0.0.0 --port 8000
 
-# Or for development with auto-reload:
-uvicorn main:app --reload --host 0.0.0.0 --port 8000
+# For development, add --reload:
+# uvicorn main:app --reload --host 0.0.0.0 --port 8000
 ```
 
-## 🏭 Production Deployment
+The API runs on port 8000 in this mode.
 
-### Option 1: Docker Compose (Recommended)
+## Production setup
 
-#### 1. Prepare Production Environment
+For a production server, use the steps in [DEPLOYMENT.md](DEPLOYMENT.md). The main steps are:
+
+- Use the Docker Compose setup. Start the Nginx service with `docker compose --profile production up -d`.
+- Set `DEBUG=false`.
+- Set `REQUIRE_API_KEY=true` and provide `VALID_API_KEYS`.
+
+### Run without Docker under systemd
+
+Use an ASGI server for the process. The example below uses Gunicorn with the Uvicorn worker. Install both packages in the virtual environment first:
+
 ```bash
-# Clone repository
-git clone https://github.com/AdarBahar/music-tools-API.git
-cd music-tools-API
-
-# Create production environment file
-cp .env.example .env
+pip install gunicorn uvicorn
 ```
 
-#### 2. Configure Production Settings
-Edit `.env` file:
-```bash
-# Production settings
-DEBUG=false
-API_HOST=0.0.0.0
-API_PORT=8000
-
-# Security
-REQUIRE_API_KEY=true
-VALID_API_KEYS=your-secret-key-1,your-secret-key-2
-
-# Performance
-MAX_FILE_SIZE_MB=500
-CLEANUP_INTERVAL_HOURS=6
-FILE_RETENTION_HOURS=24
-
-# Redis
-REDIS_URL=redis://redis:6379/0
-```
-
-#### 3. Start Production Services
-```bash
-# Start with Nginx reverse proxy
-docker-compose --profile production up -d
-
-# Or without Nginx (if you have your own reverse proxy)
-docker-compose up -d music-tools-api redis
-```
-
-### Option 2: Manual Production Setup
-
-#### 1. Install Production Dependencies
-```bash
-# Install additional production tools
-pip install gunicorn
-
-# Or use uWSGI
-pip install uwsgi
-```
-
-#### 2. Create Systemd Service (Linux)
 Create `/etc/systemd/system/music-tools-api.service`:
+
 ```ini
 [Unit]
 Description=Music Tools API
@@ -216,152 +174,139 @@ Restart=always
 WantedBy=multi-user.target
 ```
 
-#### 3. Start and Enable Service
+Start the service:
+
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl start music-tools-api
 sudo systemctl enable music-tools-api
 ```
 
-## 🔧 Configuration
+The service loads `.env` from the working directory.
 
-### Environment Variables
-Key configuration options in `.env`:
+## Configuration
+
+Set the values in `.env`. The file `.env.example` lists all settings with comments. These are the most common settings:
 
 ```bash
-# Server Configuration
+# Server
 API_HOST=0.0.0.0
 API_PORT=8000
 DEBUG=false
 
-# File Management
+# Files
 MAX_FILE_SIZE_MB=100
 CLEANUP_INTERVAL_HOURS=24
 FILE_RETENTION_HOURS=48
 
-# Audio Processing
+# Audio processing
 DEFAULT_AUDIO_QUALITY=0
 DEFAULT_AUDIO_FORMAT=mp3
 DEFAULT_DEMUCS_MODEL=htdemucs
 DEFAULT_STEM_FORMAT=mp3
 
-# Background Tasks
+# Redis (rate limit counters)
 REDIS_URL=redis://localhost:6379/0
 
-# Security (Optional)
+# API keys (optional)
 REQUIRE_API_KEY=false
-VALID_API_KEYS=key1,key2,key3
+VALID_API_KEYS=key1,key2
 ```
 
-### Performance Tuning
+Inside Docker, Compose sets `REDIS_URL` to `redis://redis:6379/0`. Keep that value for Docker.
 
-#### For High-Performance Setups
+### Busy servers
+
+- Increase the number of Gunicorn workers with `-w`. Each worker keeps its own memory-based rate limit state when Redis is not available.
+- Set `MAX_FILE_SIZE_MB` to a higher value only when the server has enough disk space.
+- Lower `FILE_RETENTION_HOURS` to free disk space sooner.
+
+### GPU support
+
+Demucs uses CUDA only when the installed PyTorch build supports CUDA and a GPU is visible to the process. The application does not set a device. Check the support with this command:
+
 ```bash
-# Increase worker processes
-gunicorn main:app -w 8 -k uvicorn.workers.UvicornWorker
-
-# Increase file size limits
-MAX_FILE_SIZE_MB=1000
-
-# Reduce cleanup frequency for busy systems
-CLEANUP_INTERVAL_HOURS=6
-FILE_RETENTION_HOURS=12
-```
-
-#### For GPU Acceleration
-Ensure CUDA is installed and available:
-```bash
-# Check CUDA availability
 python -c "import torch; print(torch.cuda.is_available())"
-
-# Install CUDA-enabled PyTorch if needed
-pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu118
 ```
 
-## 🧪 Verification
+If the result is `False` and you have an NVIDIA GPU, install a PyTorch build that matches your CUDA version. See https://pytorch.org.
 
-### Test Installation
+## Verification
+
+### Check the service
+
 ```bash
-# Health check
+# Health (port 8000 for a manual run, 8001 for Docker)
 curl http://localhost:8000/health
 
-# API documentation
+# Swagger UI (only when DEBUG=true)
 curl http://localhost:8000/docs
 
-# Test YouTube info extraction (GET endpoint)
+# YouTube info (GET endpoint)
 curl "http://localhost:8000/api/v1/youtube-info?url=https://www.youtube.com/watch?v=dQw4w9WgXcQ"
 ```
 
-### Run Test Suite
-```bash
-# Install test dependencies
-pip install pytest pytest-asyncio
+### Run the test suite
 
-# Run tests
-pytest tests/
+The tests use a fake Demucs. They need no GPU and no network access.
+
+```bash
+pip install -r requirements-core.txt pytest httpx
+python -m pytest -q
 ```
 
-## 🔍 Troubleshooting
+## Troubleshooting
 
-### Common Issues
+### FFmpeg not found
 
-#### FFmpeg Not Found
 ```bash
-# Verify FFmpeg installation
 ffmpeg -version
-
-# Install if missing (see Step 1 above)
 ```
 
-#### Redis Connection Error
+If the command fails, install FFmpeg. See Step 1.
+
+### Redis connection error
+
 ```bash
-# Check Redis status
 redis-cli ping
-
-# Start Redis if not running
-sudo systemctl start redis-server  # Linux
-brew services start redis          # macOS
 ```
 
-#### Permission Errors
+The response is `PONG` when Redis runs. Start Redis if it does not run:
+
 ```bash
-# Fix directory permissions
-sudo chown -R $USER:$USER /path/to/music-tools-api
-chmod -R 755 /path/to/music-tools-api
+sudo systemctl start redis-server   # Linux
+brew services start redis           # macOS
 ```
 
-#### Port Already in Use
+If Redis is not needed for your test, set `ENABLE_RATE_LIMITING=false`. The `/health` check does not report Redis then.
+
+### Permission errors
+
 ```bash
-# Find process using port 8000
+sudo chown -R "$USER":"$USER" /path/to/music-tools-api
+```
+
+### Port already in use
+
+```bash
 lsof -i :8000
-
-# Kill process or use different port
-API_PORT=8001 uvicorn main:app --port 8001
 ```
 
-### Getting Help
-- Check the [README](README.md) for basic information
-- Review [API Documentation](API_DOCUMENTATION.md) for endpoint details
-- Open an issue on GitHub for specific problems
-- Check logs for detailed error messages
+Stop the process that uses the port, or start the API on another port. Use the `--port` option of `uvicorn`. The `API_PORT` value does not change the port of a `uvicorn` command line.
 
-## 📈 Monitoring
+## Getting help
 
-### Health Checks
-The API provides health check endpoints:
-- `/health`: Basic health status
-- `/api/v1/stats`: Storage and processing statistics
+- Read the [README](README.md) for an overview.
+- Read [API_DOCUMENTATION.md](API_DOCUMENTATION.md) for endpoint details.
+- Open an issue on GitHub for a specific problem.
+- Read the container logs (`docker compose logs music-tools-api`) or the standard output of the process.
 
-### Logging
-Logs are written to:
-- **Console**: Standard output (development)
-- **Files**: `logs/` directory (production)
-- **Docker**: Container logs (`docker logs music-tools-api`)
+## Monitoring
 
-### Metrics
-Monitor these key metrics:
-- Response times
-- Error rates
-- File processing times
-- Storage usage
-- Memory and CPU usage
+- `/health` returns the status of each check. The check details appear only for callers with a valid API key, or when API keys are off.
+- `/api/v1/stats` returns the storage use and the file counts.
+- `/metrics` returns Prometheus metrics. It includes request counts, request durations, memory use, and processing times. It needs a valid API key when `REQUIRE_API_KEY=true`.
+
+### Logs
+
+The application writes logs to standard output. It does not write a log file. Use `docker compose logs -f music-tools-api` with Docker. Under systemd, use `journalctl -u music-tools-api`.

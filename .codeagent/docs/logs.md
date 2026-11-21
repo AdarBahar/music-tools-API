@@ -15,7 +15,7 @@ This document describes where to find and how to access logs for the Music Tools
 | App (stdout/stderr) | `journalctl -u music-tools-api` | Main application logs from Uvicorn/FastAPI |
 | Nginx access | `/var/log/nginx/access.log` | All HTTP requests hitting Nginx |
 | Nginx errors | `/var/log/nginx/error.log` | Nginx errors and warnings |
-| Custom app logs | `/var/www/apitools/logs/` | Application-specific log files (if configured) |
+| Deployment log | `/var/www/apitools/logs/deployment.log` | Entries written by `scripts/deploy.sh`. The application writes logs to standard output only. |
 
 ---
 
@@ -129,8 +129,8 @@ ls -la /var/www/apitools/logs/
 # Follow all log files
 tail -f /var/www/apitools/logs/*.log
 
-# View specific log file
-tail -f /var/www/apitools/logs/app.log
+# View the deployment log
+tail -f /var/www/apitools/logs/deployment.log
 ```
 
 ---

@@ -6,13 +6,13 @@ Durable knowledge and key decisions for the Music Tools API project.
 
 - **FastAPI over Flask**: Chosen for async support, automatic OpenAPI docs, and modern Python features
 - **Demucs Models**: Using Meta's Demucs for stem separation due to superior quality vs alternatives
-- **Redis + Celery**: Background task processing for long-running audio operations
+- **Redis**: Rate limit storage. Long audio operations run in worker threads.
 - **Docker Deployment**: Containerized for consistent deployment across environments
 
 ## Naming Conventions
 
 - **Clean Filenames**: Use video titles for output files, not random UUIDs
-- **Smart Stem Naming**: Preserve original filename with instrument suffix (e.g., `song_vocals.mp3`)
+- **Smart Stem Naming**: Preserve original filename with instrument suffix (for example, `song - vocals.mp3`)
 - **API Versioning**: `/api/v1/` prefix for all endpoints
 
 ## Model Selection
@@ -36,9 +36,9 @@ Durable knowledge and key decisions for the Music Tools API project.
 
 ## Performance Optimizations
 
-- **GPU Support**: Available for 3-5x faster processing
+- **GPU Support**: Depends on the PyTorch build and the host. No speed figure is measured.
 - **Async Operations**: Non-blocking API endpoints
-- **Background Processing**: Long operations don't block API responses
+- **Background Processing**: Long operations run in worker threads and do not block the event loop
 
 ## CodeAgent Integration
 

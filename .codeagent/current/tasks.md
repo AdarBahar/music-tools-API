@@ -4,12 +4,12 @@
 
 - [ ] Implement API authentication (API keys or JWT)
 - [ ] Add rate limiting to prevent abuse
-- [ ] Implement health check endpoints (`/health`, `/metrics`)
+- [x] Health check endpoints (`/health`, `/metrics`)
 - [ ] Enhanced input validation for URLs and files
 
 ## Medium Priority
 
-- [ ] Add progress tracking WebSocket endpoints
+- [ ] Add progress tracking WebSocket endpoints (not implemented; see the open GitHub issue on the docstrings)
 - [ ] Implement request queuing and status checking
 - [ ] Add batch processing capabilities
 - [ ] Performance monitoring and logging
@@ -32,7 +32,7 @@
 
 - [ ] Add comprehensive error handling
 - [ ] Improve logging structure and levels
-- [ ] Add unit and integration tests
+- [ ] Add integration tests (unit tests exist in `tests/`)
 - [ ] Code coverage reporting
 - [ ] CI/CD pipeline setup
 
